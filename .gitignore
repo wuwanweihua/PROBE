@@ -9,9 +9,9 @@ __pycache__/
 venv/
 
 # Large runtime outputs
-cache/
-data/
-logs/
+/cache/
+/data/
+/logs/
 
 # OS/editor noise
 .DS_Store
