@@ -12,6 +12,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-/data/week1/pi05_libero}"
 CHECKPOINT_URI="${CHECKPOINT_URI:-gs://openpi-assets/checkpoints/pi05_libero}"
 PERTURBATION_RATE="${PERTURBATION_RATE:-0.0}"
 PERTURBATION_MODES="${PERTURBATION_MODES:-drop_object_words,shuffle_words,generic_instruction}"
+MIN_FAILURE_FRACTION="${MIN_FAILURE_FRACTION:-0.2}"
 
 cd "$OPENPI_ROOT"
 
@@ -67,5 +68,5 @@ docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps runtime \
   /.venv/bin/python -m probe.data.validate_week1 \
   --dataset "$OUTPUT_DIR" \
   --min-records "$TARGET_RECORDS" \
-  --min-failure-fraction 0.2 \
+  --min-failure-fraction "$MIN_FAILURE_FRACTION" \
   --expected-k "$K_SAMPLES"

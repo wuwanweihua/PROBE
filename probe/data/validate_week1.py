@@ -61,7 +61,7 @@ def validate_dataset(
 
     if total < min_records:
         report["errors"].append(f"Need at least {min_records} records, found {total}.")
-    if successes == 0 or failures == 0:
+    if min_failure_fraction > 0.0 and (successes == 0 or failures == 0):
         report["errors"].append("Need both success and failure records.")
     if failure_fraction < min_failure_fraction:
         report["errors"].append(
