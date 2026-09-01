@@ -1,0 +1,37 @@
+project:
+  remote_root: /home/nvidia/yutao/lyh/PROBE
+  openpi_root: /home/nvidia/yutao/lyh/PROBE/src/openpi
+
+runtime:
+  gpu_id: 5
+  host: 0.0.0.0
+  port: 18000
+  mujoco_gl: egl
+  checkpoint_uri: gs://openpi-assets/checkpoints/pi05_libero
+  policy_config: pi05_libero
+
+libero:
+  task_suite_name: libero_10
+  task_order: all
+  num_trials_per_task: 50
+  num_steps_wait: 10
+  resize_size: 224
+  replan_steps: 5
+
+collection:
+  target_records: 500
+  k_samples: 32
+  seed: 7
+  action_selection: random
+  perturbation_rate: 0.0
+  perturbation_modes:
+    - none
+
+output:
+  dataset_dir: /data/week1/pi05_libero
+  manifest_name: records.jsonl
+
+quality:
+  min_records: 500
+  min_failure_fraction: 0.20
+  expected_k: 32

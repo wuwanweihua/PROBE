@@ -1,0 +1,28 @@
+services:
+  runtime:
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=${GPU_ID:-all}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids:
+                - "${GPU_ID:-0}"
+              capabilities:
+                - gpu
+
+  openpi_server:
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=${GPU_ID:-all}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids:
+                - "${GPU_ID:-0}"
+              capabilities:
+                - gpu
