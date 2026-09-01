@@ -85,8 +85,9 @@ def _validate_paths_and_actions(
         return
 
     for idx, record in enumerate(records[:], start=1):
-        obs_path = dataset_path / str(record.get("obs_path", ""))
-        actions_path = dataset_path / str(record.get("action_samples_path", ""))
+        record_dataset_path = Path(str(record.get("source_dataset_dir") or dataset_path))
+        obs_path = record_dataset_path / str(record.get("obs_path", ""))
+        actions_path = record_dataset_path / str(record.get("action_samples_path", ""))
         if not obs_path.exists():
             report["errors"].append(f"Record {idx}: missing obs file {obs_path}")
         if not actions_path.exists():
