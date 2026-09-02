@@ -1,0 +1,19 @@
+libero_plus:
+  task_suite_name: libero_10
+  baseline_dataset: /data/libero_plus_baseline/libero10_hard50_k1
+  failed_episodes: /data/libero_plus_baseline/libero10_hard50_failed_episodes.jsonl
+  classification_json: /app/third_party/libero/libero/libero/benchmark/task_classification.json
+
+rewrite:
+  model: gpt-5.5
+  rewrites_per_task: 5
+  max_failed_tasks: 20
+  output_path: /data/libero_plus_rewrites/libero10_hard50_gpt55_rewrites.jsonl
+
+evaluation:
+  host: 0.0.0.0
+  port: 18000
+  k_samples: 1
+  replan_steps: 5
+  num_trials_per_rewrite: 1
+  output_path: /data/libero_plus_rewrite_eval/libero10_hard50_gpt55_results.jsonl

@@ -1,0 +1,5 @@
+services:
+  runtime:
+    image: libero_plus_runtime:latest
+    volumes:
+      - ${LIBERO_PLUS_ROOT:-/home/nvidia/yutao/lyh/PROBE/src/LIBERO-plus}:/app/third_party/libero

@@ -41,7 +41,7 @@ def make_libero_env(task: Any, resolution: int = LIBERO_ENV_RESOLUTION, seed: in
     task_description = task.language
     bddl_file = Path(get_libero_path("bddl_files")) / task.problem_folder / task.bddl_file
     env = OffScreenRenderEnv(
-        bddl_file_name=bddl_file,
+        bddl_file_name=str(bddl_file),
         camera_heights=resolution,
         camera_widths=resolution,
     )
