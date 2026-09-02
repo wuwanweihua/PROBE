@@ -167,7 +167,7 @@ def _load_rewrite_jobs(
 ) -> list[dict[str, Any]]:
     jobs: list[dict[str, Any]] = []
     seen_tasks: set[int] = set()
-    with path.open("r", encoding="utf-8") as handle:
+    with path.open("r", encoding="utf-8-sig") as handle:
         for line_no, line in enumerate(handle, start=1):
             if not line.strip():
                 continue
@@ -206,7 +206,7 @@ def _completed_attempt_keys(output_path: Path) -> set[str]:
     if not output_path.exists():
         return set()
     keys: set[str] = set()
-    with output_path.open("r", encoding="utf-8") as handle:
+    with output_path.open("r", encoding="utf-8-sig") as handle:
         for line in handle:
             if not line.strip():
                 continue

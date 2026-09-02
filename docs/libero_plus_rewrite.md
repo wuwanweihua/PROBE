@@ -12,10 +12,13 @@
 
 ```bash
 OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=https://alphageek.kdns.fr
 OPENAI_MODEL=gpt-5.5
 ```
 
 `.env` 已经在 `.gitignore` 中，不能提交到 GitHub。
+
+如果使用 OpenAI 官方 API，`OPENAI_BASE_URL` 可以删掉；如果使用中转站，必须填中转站给你的 base URL。
 
 ## Data Flow
 

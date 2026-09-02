@@ -47,6 +47,7 @@ class OpenAIRewriteClient:
         rewrites_per_task: int = 5,
         task_id: int | None = None,
         classification: dict[str, Any] | None = None,
+        prompt_style: str = "strict_semantic",
         max_output_tokens: int = 1200,
     ) -> list[InstructionRewrite]:
         prompt = build_rewrite_prompt(
@@ -54,6 +55,7 @@ class OpenAIRewriteClient:
             rewrites_per_task=rewrites_per_task,
             task_id=task_id,
             classification=classification,
+            prompt_style=prompt_style,
         )
         response = self._post_json(
             "/responses",
@@ -105,12 +107,14 @@ class OpenAIRewriteClient:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"OpenAI API request failed with HTTP {exc.code}: {body}") from exc
+            raise RuntimeError(
+                f"OpenAI API request failed with HTTP {exc.code} at {self.base_url}: {body}"
+            ) from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"OpenAI API request failed: {exc}") from exc
 
 
-def load_dotenv(path: str | Path = ".env") -> None:
+def load_dotenv(path: str | Path = ".env", override: bool = True) -> None:
     env_path = Path(path)
     if not env_path.exists():
         return
@@ -121,7 +125,7 @@ def load_dotenv(path: str | Path = ".env") -> None:
         key, value = line.split("=", 1)
         key = key.strip()
         value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
+        if key and (override or key not in os.environ):
             os.environ[key] = value
 
 

@@ -14,7 +14,7 @@ from probe.instruction_rewrite.gpt_rewriter import (
     OpenAIRewriteClient,
     load_dotenv,
 )
-from probe.instruction_rewrite.prompts import build_rewrite_prompt
+from probe.instruction_rewrite.prompts import build_rewrite_prompt, clean_robot_instruction
 
 
 def rewrite_failed_tasks(args: argparse.Namespace) -> dict[str, Any]:
@@ -60,20 +60,27 @@ def rewrite_failed_tasks(args: argparse.Namespace) -> dict[str, Any]:
             instruction = str(job.get("instruction") or job.get("task_name") or "").strip()
             if not instruction:
                 continue
+            clean_instruction = clean_robot_instruction(instruction)
             rewrites = client.rewrite_instruction(
-                original_instruction=instruction,
+                original_instruction=clean_instruction,
                 rewrites_per_task=args.rewrites_per_task,
                 task_id=_as_int(job.get("task_id")),
                 classification=job.get("classification") if isinstance(job.get("classification"), dict) else None,
+                prompt_style=args.prompt_style,
             )
             payload = {
-                "rewrite_batch_id": f"task{int(job.get('task_id') or 0):04d}_{_short_hash(instruction)}",
+                "rewrite_batch_id": (
+                    f"task{int(job.get('task_id') or 0):04d}_"
+                    f"{args.prompt_style}_{_short_hash(clean_instruction)}"
+                ),
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "model": client.model,
+                "prompt_style": args.prompt_style,
                 "task_suite": job.get("task_suite"),
                 "task_id": job.get("task_id"),
                 "task_name": job.get("task_name"),
-                "original_instruction": instruction,
+                "original_instruction": clean_instruction,
+                "raw_benchmark_instruction": instruction,
                 "source_episode_ids": job.get("source_episode_ids") or [job.get("episode_id")],
                 "classification": job.get("classification"),
                 "rewrites": [
@@ -96,7 +103,8 @@ def rewrite_failed_tasks(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "input": args.input,
         "output": str(output_path),
-        "model": args.model,
+        "model": client.model,
+        "base_url": client.base_url,
         "num_failed_records": len(records),
         "num_unique_jobs": len(jobs),
         "num_skipped_existing": len(jobs) - len(pending),
@@ -172,9 +180,14 @@ def main() -> None:
     parser.add_argument("--input", required=True, help="Failed episode JSONL produced by export_failed_episodes.")
     parser.add_argument("--output", required=True, help="Output rewrite JSONL path.")
     parser.add_argument("--env-file", default=".env")
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--model", default=None, help=f"Defaults to OPENAI_MODEL or {DEFAULT_MODEL}.")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--rewrites-per-task", type=int, default=5)
+    parser.add_argument(
+        "--prompt-style",
+        choices=["strict_semantic", "explicit_steps", "perception_clear"],
+        default="strict_semantic",
+    )
     parser.add_argument("--dedupe", choices=["task_instruction", "episode", "none"], default="task_instruction")
     parser.add_argument("--timeout", type=float, default=90.0)
     parser.add_argument("--sleep-seconds", type=float, default=0.0)
