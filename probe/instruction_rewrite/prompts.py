@@ -20,6 +20,15 @@ Do not include benchmark metadata such as view numbers, camera settings, seeds, 
 Return only JSON that matches the requested schema."""
 
 
+CONDITION_SYSTEM_PROMPT = """You create two controlled language conditions for a robot manipulation benchmark.
+Both conditions must preserve the same task goal, objects, colors, receptacles, spatial relations, action order, and success condition.
+The better condition should be clearer for a vision-language-action robot policy.
+The worse condition should be less friendly for a vision-language-action robot policy while remaining semantically equivalent and executable by a human.
+Do not change the target object, target receptacle, target location, quantity, color, or required final state.
+Do not introduce a false goal, a distractor object, impossible actions, negation, or benchmark metadata.
+Return only JSON that matches the requested schema."""
+
+
 LIBERO_METADATA_RE = re.compile(
     r"\s+view\s+[-+]?\d+\s+[-+]?\d+\s+[-+]?\d+\s+[-+]?\d+\s+[-+]?\d+\s+initstate\s+\d+\s*$",
     re.IGNORECASE,
@@ -62,6 +71,47 @@ def build_rewrite_prompt(
     return (
         "Create semantically equivalent instruction rewrites for this robot benchmark task.\n"
         "Keep each rewrite executable as a single instruction.\n"
+        "Input:\n"
+        f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    )
+
+
+def build_condition_pair_prompt(
+    *,
+    original_instruction: str,
+    task_id: int | None = None,
+    classification: dict[str, Any] | None = None,
+) -> str:
+    clean_instruction = clean_robot_instruction(original_instruction)
+    payload: dict[str, Any] = {
+        "task_id": task_id,
+        "original_instruction": clean_instruction,
+        "raw_benchmark_instruction": original_instruction,
+        "conditions_to_create": ["better", "worse"],
+        "better_instruction_requirements": [
+            "Use a short direct robot command.",
+            "Make the object, color, receptacle, and target location explicit.",
+            "Use natural action order and avoid ambiguous pronouns.",
+            "If a container must be closed, explicitly name the container to close.",
+        ],
+        "worse_instruction_requirements": [
+            "Keep the exact same task semantics and final success condition.",
+            "Make the wording less direct or less natural for a VLA policy.",
+            "Allowed changes include passive voice, unusual but grammatical word order, extra descriptive phrasing, or clear but less common synonyms.",
+            "Avoid making the instruction objectively wrong or impossible.",
+        ],
+        "forbidden_changes": [
+            "Do not change objects, colors, receptacles, target locations, or action order.",
+            "Do not add or remove required manipulation steps.",
+            "Do not include view/initstate metadata.",
+            "Do not use negation or intentionally contradictory language.",
+        ],
+    }
+    if classification:
+        payload["classification"] = classification
+    return (
+        "Generate one better and one worse instruction condition for the same LIBERO-Plus task.\n"
+        "Both must remain semantically equivalent to the original task.\n"
         "Input:\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )

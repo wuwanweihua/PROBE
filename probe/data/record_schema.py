@@ -34,6 +34,12 @@ class ProbeCallRecord:
     episode_done: bool
     episode_steps: int
     reward_sum: float
+    base_id: str = ""
+    condition_id: str = ""
+    condition_type: str = ""
+    exec_seed: int | None = None
+    probe_seed: int | None = None
+    replan_idx: int = 0
     perturbation_type: str = "none"
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)

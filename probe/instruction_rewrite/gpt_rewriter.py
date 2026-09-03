@@ -10,7 +10,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from probe.instruction_rewrite.prompts import SYSTEM_PROMPT, build_rewrite_prompt
+from probe.instruction_rewrite.prompts import (
+    CONDITION_SYSTEM_PROMPT,
+    SYSTEM_PROMPT,
+    build_condition_pair_prompt,
+    build_rewrite_prompt,
+)
 
 
 DEFAULT_MODEL = "gpt-5.5"
@@ -21,6 +26,15 @@ class InstructionRewrite:
     instruction: str
     rewrite_type: str
     rationale: str
+
+
+@dataclass
+class InstructionConditionPair:
+    better_instruction: str
+    better_rationale: str
+    worse_instruction: str
+    worse_rationale: str
+    worse_degradation_type: str
 
 
 class OpenAIRewriteClient:
@@ -90,6 +104,47 @@ class OpenAIRewriteClient:
             for item in rewrites
             if isinstance(item, dict) and str(item.get("instruction") or "").strip()
         ]
+
+    def generate_condition_pair(
+        self,
+        *,
+        original_instruction: str,
+        task_id: int | None = None,
+        classification: dict[str, Any] | None = None,
+        max_output_tokens: int = 1000,
+    ) -> InstructionConditionPair:
+        prompt = build_condition_pair_prompt(
+            original_instruction=original_instruction,
+            task_id=task_id,
+            classification=classification,
+        )
+        response = self._post_json(
+            "/responses",
+            {
+                "model": self.model,
+                "input": [
+                    {"role": "system", "content": CONDITION_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": "instruction_condition_pair",
+                        "strict": True,
+                        "schema": _condition_pair_schema(),
+                    }
+                },
+                "max_output_tokens": max_output_tokens,
+            },
+        )
+        payload = json.loads(extract_response_text(response))
+        return InstructionConditionPair(
+            better_instruction=str(payload["better"]["instruction"]).strip(),
+            better_rationale=str(payload["better"].get("rationale") or ""),
+            worse_instruction=str(payload["worse"]["instruction"]).strip(),
+            worse_rationale=str(payload["worse"].get("rationale") or ""),
+            worse_degradation_type=str(payload["worse"].get("degradation_type") or "unknown"),
+        )
 
     def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         data = json.dumps(payload).encode("utf-8")
@@ -168,4 +223,35 @@ def _rewrite_schema(rewrites_per_task: int) -> dict[str, Any]:
             }
         },
         "required": ["rewrites"],
+    }
+
+
+def _condition_pair_schema() -> dict[str, Any]:
+    better_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "instruction": {"type": "string"},
+            "rationale": {"type": "string"},
+        },
+        "required": ["instruction", "rationale"],
+    }
+    worse_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "instruction": {"type": "string"},
+            "rationale": {"type": "string"},
+            "degradation_type": {"type": "string"},
+        },
+        "required": ["instruction", "rationale", "degradation_type"],
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "better": better_schema,
+            "worse": worse_schema,
+        },
+        "required": ["better", "worse"],
     }

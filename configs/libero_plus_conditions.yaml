@@ -1,0 +1,23 @@
+dataset: LIBERO-Plus
+task_suite_name: libero_10
+
+conditions:
+  base_tasks_path: /data/libero_plus_conditions/libero10_base_tasks.jsonl
+  condition_pairs_path: /data/libero_plus_conditions/libero10_gpt55_conditions.jsonl
+  condition_types:
+    - original
+    - better
+    - worse
+
+collection:
+  num_trials_per_condition: 8
+  k_samples: 32
+  replan_steps: 5
+  init_state_index: 0
+  exec_seed_start: 700000
+  probe_seed_start: 100000
+  output_dir: /data/libero_plus_conditions/libero10_condition_rollouts
+
+rewrite:
+  model: gpt-5.5
+  base_url: https://alphageek.kdns.fr
