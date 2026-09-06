@@ -16,6 +16,7 @@ import tqdm
 
 from probe.data.record_schema import ProbeCallRecord
 from probe.data.writer import ProbeDatasetWriter
+from probe.instruction_rewrite.online_vlm import QwenVLMRewriteClient, RewriteResult
 from probe.envs.libero_runner import (
     LIBERO_DUMMY_ACTION,
     build_policy_element,
@@ -50,6 +51,11 @@ class ConditionCollectorArgs:
     checkpoint_uri: str = "gs://openpi-assets/checkpoints/pi05_libero"
     policy_name: str = "pi05_libero"
     resume: bool = True
+    instruction_rewriter_model_dir: str | None = None
+    instruction_rewriter_source: str = "original"
+    instruction_rewriter_max_new_tokens: int = 96
+    instruction_rewriter_temperature: float = 0.0
+    instruction_rewriter_top_p: float = 0.9
 
 
 def main() -> None:
@@ -66,6 +72,7 @@ def collect_conditions(args: ConditionCollectorArgs) -> dict[str, Any]:
     task_suite = get_task_suite(args.task_suite_name)
     max_steps = max_steps_for_suite(args.task_suite_name)
     client = Pi05Client(args.host, args.port)
+    instruction_rewriter = _build_instruction_rewriter(args)
 
     logging.info("Writing dataset to %s", args.output_dir)
     logging.info("Loaded %d condition batches from %s", len(condition_batches), args.conditions)
@@ -117,6 +124,7 @@ def collect_conditions(args: ConditionCollectorArgs) -> dict[str, Any]:
                         max_steps=max_steps,
                         args=args,
                         client=client,
+                        instruction_rewriter=instruction_rewriter,
                         writer=writer,
                     )
                     written_episodes += 1
@@ -156,6 +164,7 @@ def _run_condition_episode(
     max_steps: int,
     args: ConditionCollectorArgs,
     client: Pi05Client,
+    instruction_rewriter: QwenVLMRewriteClient | None,
     writer: ProbeDatasetWriter,
 ) -> bool:
     random.seed(exec_seed)
@@ -209,6 +218,7 @@ def _run_condition_episode(
                     replan_idx=replan_idx,
                     args=args,
                     client=client,
+                    instruction_rewriter=instruction_rewriter,
                     writer=writer,
                     exec_rng=exec_rng,
                     action_plan=action_plan,
@@ -264,13 +274,39 @@ def _sample_and_enqueue_action(
     replan_idx: int,
     args: ConditionCollectorArgs,
     client: Pi05Client,
+    instruction_rewriter: QwenVLMRewriteClient | None,
     writer: ProbeDatasetWriter,
     exec_rng: np.random.Generator,
     action_plan: collections.deque[np.ndarray],
 ) -> ProbeCallRecord:
     random.seed(probe_seed)
     np.random.seed(probe_seed)
-    element = build_policy_element(obs, instruction, resize_size=args.resize_size)
+    source_instruction = instruction
+    if instruction_rewriter is not None:
+        source_instruction = _select_instruction_source(
+            batch=batch,
+            condition=condition,
+            canonical_instruction=instruction,
+            strategy=args.instruction_rewriter_source,
+        )
+    element = build_policy_element(obs, source_instruction, resize_size=args.resize_size)
+    rewrite_result: RewriteResult | None = None
+    policy_instruction = source_instruction
+    if instruction_rewriter is not None:
+        rewrite_result = instruction_rewriter.rewrite_from_policy_element(
+            policy_element=element,
+            source_instruction=source_instruction,
+            task_id=task_id,
+            task_name=task_name,
+            condition_type=str(condition.get("condition_type") or condition.get("condition_id")),
+            episode_id=episode_id,
+            step_idx=step_idx,
+            replan_idx=replan_idx,
+        )
+        policy_instruction = rewrite_result.instruction or source_instruction
+        element["prompt"] = policy_instruction
+    else:
+        element["prompt"] = policy_instruction
     samples = client.sample_action_chunks(element, k=args.k_samples)
     selected = _select_action_index(samples, args.action_selection, exec_rng)
     selected_chunk = samples[selected]
@@ -293,7 +329,7 @@ def _sample_and_enqueue_action(
         task_name=task_name,
         trial_idx=trial_idx,
         step_idx=step_idx,
-        instruction=instruction,
+        instruction=policy_instruction,
         policy_name=args.policy_name,
         checkpoint_uri=args.checkpoint_uri,
         seed=exec_seed,
@@ -322,6 +358,10 @@ def _sample_and_enqueue_action(
             "original_instruction": batch.get("original_instruction"),
             "raw_benchmark_instruction": batch.get("raw_benchmark_instruction"),
             "classification": batch.get("classification"),
+            "source_instruction": source_instruction,
+            "policy_instruction": policy_instruction,
+            "instruction_rewriter_enabled": instruction_rewriter is not None,
+            "instruction_rewriter_source": args.instruction_rewriter_source,
             "base_index": base_index,
             "condition_index": condition.get("condition_index"),
             "condition_order_index": condition.get("_order_index"),
@@ -333,6 +373,7 @@ def _sample_and_enqueue_action(
             "action_sample_shape": list(samples.shape),
             "host": args.host,
             "port": args.port,
+            **(rewrite_result.to_metadata() if rewrite_result is not None else {}),
         },
     )
 
@@ -414,6 +455,31 @@ def _select_action_index(samples: np.ndarray, strategy: str, rng: np.random.Gene
     raise ValueError(f"Unknown action_selection strategy: {strategy}")
 
 
+def _select_instruction_source(
+    *,
+    batch: dict[str, Any],
+    condition: dict[str, Any],
+    canonical_instruction: str,
+    strategy: str,
+) -> str:
+    if strategy == "condition":
+        return str(condition.get("instruction") or canonical_instruction)
+    if strategy == "original":
+        return str(batch.get("original_instruction") or canonical_instruction or condition.get("instruction") or "")
+    raise ValueError(f"Unknown instruction_rewriter_source strategy: {strategy}")
+
+
+def _build_instruction_rewriter(args: ConditionCollectorArgs) -> QwenVLMRewriteClient | None:
+    if not args.instruction_rewriter_model_dir:
+        return None
+    return QwenVLMRewriteClient(
+        args.instruction_rewriter_model_dir,
+        max_new_tokens=args.instruction_rewriter_max_new_tokens,
+        temperature=args.instruction_rewriter_temperature,
+        top_p=args.instruction_rewriter_top_p,
+    )
+
+
 def _parse_condition_types(value: str | None) -> tuple[str, ...]:
     if not value:
         return ("original", "better", "worse")
@@ -444,6 +510,8 @@ def _report(
         "probe_seed_start": args.probe_seed_start,
         "k_samples": args.k_samples,
         "num_trials_per_condition": args.num_trials_per_condition,
+        "instruction_rewriter_model_dir": args.instruction_rewriter_model_dir,
+        "instruction_rewriter_source": args.instruction_rewriter_source,
     }
 
 
@@ -469,6 +537,11 @@ def _parse_args() -> ConditionCollectorArgs:
     parser.add_argument("--manifest-name", default="records.jsonl")
     parser.add_argument("--checkpoint-uri", default="gs://openpi-assets/checkpoints/pi05_libero")
     parser.add_argument("--policy-name", default="pi05_libero")
+    parser.add_argument("--instruction-rewriter-model-dir")
+    parser.add_argument("--instruction-rewriter-source", choices=["original", "condition"], default="original")
+    parser.add_argument("--instruction-rewriter-max-new-tokens", type=int, default=96)
+    parser.add_argument("--instruction-rewriter-temperature", type=float, default=0.0)
+    parser.add_argument("--instruction-rewriter-top-p", type=float, default=0.9)
     parser.add_argument("--no-resume", dest="resume", action="store_false")
     parser.set_defaults(resume=True)
     namespace = parser.parse_args()
@@ -494,6 +567,11 @@ def _parse_args() -> ConditionCollectorArgs:
         checkpoint_uri=namespace.checkpoint_uri,
         policy_name=namespace.policy_name,
         resume=namespace.resume,
+        instruction_rewriter_model_dir=namespace.instruction_rewriter_model_dir,
+        instruction_rewriter_source=namespace.instruction_rewriter_source,
+        instruction_rewriter_max_new_tokens=namespace.instruction_rewriter_max_new_tokens,
+        instruction_rewriter_temperature=namespace.instruction_rewriter_temperature,
+        instruction_rewriter_top_p=namespace.instruction_rewriter_top_p,
     )
 
 

@@ -5,6 +5,8 @@ PROBE_ROOT="${PROBE_ROOT:-/home/nvidia/yutao/lyh/PROBE}"
 OPENPI_ROOT="${OPENPI_ROOT:-$PROBE_ROOT/src/openpi}"
 LIBERO_PLUS_ROOT="${LIBERO_PLUS_ROOT:-$PROBE_ROOT/src/LIBERO-plus}"
 GPU_ID="${GPU_ID:-5}"
+RUNTIME_GPU_ID="${RUNTIME_GPU_ID:-$GPU_ID}"
+SERVER_GPU_ID="${SERVER_GPU_ID:-$GPU_ID}"
 PORT="${PORT:-18000}"
 TASK_SUITE="${TASK_SUITE:-libero_10}"
 CONDITIONS_PATH="${CONDITIONS_PATH:-/data/libero_plus_conditions/libero10_gpt55_conditions.jsonl}"
@@ -19,6 +21,15 @@ PROBE_SEED_START="${PROBE_SEED_START:-100000}"
 CHECKPOINT_URI="${CHECKPOINT_URI:-gs://openpi-assets/checkpoints/pi05_libero}"
 MIN_RECORDS="${MIN_RECORDS:-1}"
 MIN_FAILURE_FRACTION="${MIN_FAILURE_FRACTION:-0.0}"
+INSTRUCTION_REWRITER_MODEL_DIR="${INSTRUCTION_REWRITER_MODEL_DIR:-}"
+INSTRUCTION_REWRITER_SOURCE="${INSTRUCTION_REWRITER_SOURCE:-original}"
+INSTRUCTION_REWRITER_MAX_NEW_TOKENS="${INSTRUCTION_REWRITER_MAX_NEW_TOKENS:-96}"
+INSTRUCTION_REWRITER_TEMPERATURE="${INSTRUCTION_REWRITER_TEMPERATURE:-0.0}"
+INSTRUCTION_REWRITER_TOP_P="${INSTRUCTION_REWRITER_TOP_P:-0.9}"
+
+if [[ -n "$INSTRUCTION_REWRITER_MODEL_DIR" && "$INSTRUCTION_REWRITER_MODEL_DIR" == "$PROBE_ROOT/models"* ]]; then
+  INSTRUCTION_REWRITER_MODEL_DIR="/app/models${INSTRUCTION_REWRITER_MODEL_DIR#$PROBE_ROOT/models}"
+fi
 
 cd "$OPENPI_ROOT"
 
@@ -27,10 +38,12 @@ rsync -a "$PROBE_ROOT/probe/" "$OPENPI_ROOT/probe/"
 rsync -a "$PROBE_ROOT/configs/" "$OPENPI_ROOT/configs/"
 
 export GPU_ID
+export RUNTIME_GPU_ID
+export SERVER_GPU_ID
 export LIBERO_PLUS_ROOT
-export OPENPI_DATA_HOME="$PROBE_ROOT/cache/openpi"
-export HF_HOME="$PROBE_ROOT/cache/huggingface"
-export XDG_CACHE_HOME="$PROBE_ROOT/cache"
+export OPENPI_DATA_HOME="${OPENPI_DATA_HOME:-$PROBE_ROOT/cache/openpi}"
+export HF_HOME="${HF_HOME:-$PROBE_ROOT/cache/huggingface}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$PROBE_ROOT/cache}"
 export MUJOCO_GL="${MUJOCO_GL:-egl}"
 export SERVER_ARGS="--port $PORT --env LIBERO policy:checkpoint --policy.config pi05_libero --policy.dir $CHECKPOINT_URI"
 
@@ -46,6 +59,13 @@ if [[ -n "$MAX_BASE_STATES" ]]; then
 fi
 if [[ -n "$MAX_EPISODES" ]]; then
   EXTRA_ARGS+=(--max-episodes "$MAX_EPISODES")
+fi
+if [[ -n "$INSTRUCTION_REWRITER_MODEL_DIR" ]]; then
+  EXTRA_ARGS+=(--instruction-rewriter-model-dir "$INSTRUCTION_REWRITER_MODEL_DIR")
+  EXTRA_ARGS+=(--instruction-rewriter-source "$INSTRUCTION_REWRITER_SOURCE")
+  EXTRA_ARGS+=(--instruction-rewriter-max-new-tokens "$INSTRUCTION_REWRITER_MAX_NEW_TOKENS")
+  EXTRA_ARGS+=(--instruction-rewriter-temperature "$INSTRUCTION_REWRITER_TEMPERATURE")
+  EXTRA_ARGS+=(--instruction-rewriter-top-p "$INSTRUCTION_REWRITER_TOP_P")
 fi
 
 cleanup() {
@@ -68,7 +88,13 @@ done
 
 docker compose "${COMPOSE_ARGS[@]}" logs --tail=80 openpi_server
 
-docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps runtime \
+docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps \
+  -e INSTRUCTION_REWRITER_MODEL_DIR="$INSTRUCTION_REWRITER_MODEL_DIR" \
+  -e INSTRUCTION_REWRITER_SOURCE="$INSTRUCTION_REWRITER_SOURCE" \
+  -e INSTRUCTION_REWRITER_MAX_NEW_TOKENS="$INSTRUCTION_REWRITER_MAX_NEW_TOKENS" \
+  -e INSTRUCTION_REWRITER_TEMPERATURE="$INSTRUCTION_REWRITER_TEMPERATURE" \
+  -e INSTRUCTION_REWRITER_TOP_P="$INSTRUCTION_REWRITER_TOP_P" \
+  runtime \
   /.venv/bin/python -m probe.rollout.collect_condition_calls \
   --conditions "$CONDITIONS_PATH" \
   --output-dir "$OUTPUT_DIR" \

@@ -5,6 +5,8 @@ PROBE_ROOT="${PROBE_ROOT:-/home/nvidia/yutao/lyh/PROBE}"
 OPENPI_ROOT="${OPENPI_ROOT:-$PROBE_ROOT/src/openpi}"
 LIBERO_PLUS_ROOT="${LIBERO_PLUS_ROOT:-$PROBE_ROOT/src/LIBERO-plus}"
 GPU_ID="${GPU_ID:-5}"
+RUNTIME_GPU_ID="${RUNTIME_GPU_ID:-$GPU_ID}"
+SERVER_GPU_ID="${SERVER_GPU_ID:-$GPU_ID}"
 PORT="${PORT:-18000}"
 TASK_SUITE="${TASK_SUITE:-libero_10}"
 CHECKPOINT_URI="${CHECKPOINT_URI:-gs://openpi-assets/checkpoints/pi05_libero}"
@@ -20,6 +22,8 @@ rsync -a "$PROBE_ROOT/probe/" "$OPENPI_ROOT/probe/"
 rsync -a "$PROBE_ROOT/configs/" "$OPENPI_ROOT/configs/"
 
 export GPU_ID
+export RUNTIME_GPU_ID
+export SERVER_GPU_ID
 export LIBERO_PLUS_ROOT
 export OPENPI_DATA_HOME="$PROBE_ROOT/cache/openpi"
 export HF_HOME="$PROBE_ROOT/cache/huggingface"

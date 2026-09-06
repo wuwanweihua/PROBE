@@ -4,6 +4,8 @@ set -euo pipefail
 PROBE_ROOT="${PROBE_ROOT:-/home/nvidia/yutao/lyh/PROBE}"
 OPENPI_ROOT="${OPENPI_ROOT:-$PROBE_ROOT/src/openpi}"
 GPU_ID="${GPU_ID:-5}"
+RUNTIME_GPU_ID="${RUNTIME_GPU_ID:-$GPU_ID}"
+SERVER_GPU_ID="${SERVER_GPU_ID:-$GPU_ID}"
 PORT="${PORT:-18000}"
 TARGET_RECORDS="${TARGET_RECORDS:-500}"
 K_SAMPLES="${K_SAMPLES:-32}"
@@ -21,6 +23,8 @@ rsync -a "$PROBE_ROOT/probe/" "$OPENPI_ROOT/probe/"
 rsync -a "$PROBE_ROOT/configs/" "$OPENPI_ROOT/configs/"
 
 export GPU_ID
+export RUNTIME_GPU_ID
+export SERVER_GPU_ID
 export OPENPI_DATA_HOME="$PROBE_ROOT/cache/openpi"
 export HF_HOME="$PROBE_ROOT/cache/huggingface"
 export XDG_CACHE_HOME="$PROBE_ROOT/cache"

@@ -2,27 +2,29 @@ services:
   runtime:
     environment:
       - CUDA_VISIBLE_DEVICES=0
-      - NVIDIA_VISIBLE_DEVICES=${GPU_ID:-all}
+      - NVIDIA_VISIBLE_DEVICES=${RUNTIME_GPU_ID:-0}
+      - XLA_PYTHON_CLIENT_PREALLOCATE=false
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               device_ids:
-                - "${GPU_ID:-0}"
+                - "${RUNTIME_GPU_ID:-0}"
               capabilities:
                 - gpu
 
   openpi_server:
     environment:
       - CUDA_VISIBLE_DEVICES=0
-      - NVIDIA_VISIBLE_DEVICES=${GPU_ID:-all}
+      - NVIDIA_VISIBLE_DEVICES=${SERVER_GPU_ID:-0}
+      - XLA_PYTHON_CLIENT_PREALLOCATE=false
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               device_ids:
-                - "${GPU_ID:-0}"
+                - "${SERVER_GPU_ID:-0}"
               capabilities:
                 - gpu

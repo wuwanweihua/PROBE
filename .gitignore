@@ -16,6 +16,7 @@ venv/
 /cache/
 /data/
 /logs/
+/models/
 
 # OS/editor noise
 .DS_Store

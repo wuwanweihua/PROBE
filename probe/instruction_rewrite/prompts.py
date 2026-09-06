@@ -20,6 +20,15 @@ Do not include benchmark metadata such as view numbers, camera settings, seeds, 
 Return only JSON that matches the requested schema."""
 
 
+ONLINE_REWRITE_SYSTEM_PROMPT = """You rewrite a robot manipulation instruction using the current observation as context.
+Preserve the exact task goal, object identities, colors, receptacles, spatial relations, action order, and success condition.
+Use the observation to make the instruction clearer and more actionable for a vision-language-action policy.
+You may rewrite with synonym substitution, word-order changes, concise rephrasing, or direct command style.
+Do not add new objects, change the goal, change the required final state, or introduce benchmark metadata.
+Do not mention camera names, view ids, seeds, initstate ids, or hidden reasoning.
+Return only the rewritten instruction text."""
+
+
 CONDITION_SYSTEM_PROMPT = """You create two controlled language conditions for a robot manipulation benchmark.
 Both conditions must preserve the same task goal, objects, colors, receptacles, spatial relations, action order, and success condition.
 The better condition should be clearer for a vision-language-action robot policy.
@@ -112,6 +121,49 @@ def build_condition_pair_prompt(
     return (
         "Generate one better and one worse instruction condition for the same LIBERO-Plus task.\n"
         "Both must remain semantically equivalent to the original task.\n"
+        "Input:\n"
+        f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    )
+
+
+def build_online_rewrite_prompt(
+    *,
+    source_instruction: str,
+    task_id: int | None = None,
+    task_name: str | None = None,
+    condition_type: str | None = None,
+    episode_id: str | None = None,
+    step_idx: int | None = None,
+    replan_idx: int | None = None,
+    state_summary: dict[str, Any] | None = None,
+) -> str:
+    clean_instruction = clean_robot_instruction(source_instruction)
+    payload: dict[str, Any] = {
+        "task_id": task_id,
+        "task_name": task_name,
+        "condition_type": condition_type,
+        "episode_id": episode_id,
+        "step_idx": step_idx,
+        "replan_idx": replan_idx,
+        "source_instruction": clean_instruction,
+        "raw_benchmark_instruction": source_instruction,
+        "rewrite_goal": (
+            "Rewrite the instruction so it is easier for a robot policy to follow "
+            "from the current observation, while preserving the exact semantics."
+        ),
+        "requirements": [
+            "Keep the same objects, colors, target receptacles, spatial relations, and final success condition.",
+            "Do not add or remove manipulation steps unless they are already logically required by the task.",
+            "Do not mention view numbers, seeds, or initstate metadata.",
+            "Return a single instruction only.",
+        ],
+    }
+    if state_summary is not None:
+        payload["robot_state_summary"] = state_summary
+    return (
+        "Rewrite the robot instruction using the current observation as context.\n"
+        "The current observation images are attached separately to this request.\n"
+        "Return only the rewritten instruction.\n"
         "Input:\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
