@@ -17,6 +17,7 @@ import tqdm
 from probe.data.record_schema import ProbeCallRecord
 from probe.data.writer import ProbeDatasetWriter
 from probe.instruction_rewrite.online_vlm import QwenVLMRewriteClient, RewriteResult
+from probe.instruction_rewrite.qwen_socket import QwenSocketRewriteClient
 from probe.envs.libero_runner import (
     LIBERO_DUMMY_ACTION,
     build_policy_element,
@@ -51,6 +52,7 @@ class ConditionCollectorArgs:
     checkpoint_uri: str = "gs://openpi-assets/checkpoints/pi05_libero"
     policy_name: str = "pi05_libero"
     resume: bool = True
+    instruction_rewriter_socket: str | None = None
     instruction_rewriter_model_dir: str | None = None
     instruction_rewriter_source: str = "original"
     instruction_rewriter_max_new_tokens: int = 96
@@ -164,7 +166,7 @@ def _run_condition_episode(
     max_steps: int,
     args: ConditionCollectorArgs,
     client: Pi05Client,
-    instruction_rewriter: QwenVLMRewriteClient | None,
+    instruction_rewriter: Any | None,
     writer: ProbeDatasetWriter,
 ) -> bool:
     random.seed(exec_seed)
@@ -274,7 +276,7 @@ def _sample_and_enqueue_action(
     replan_idx: int,
     args: ConditionCollectorArgs,
     client: Pi05Client,
-    instruction_rewriter: QwenVLMRewriteClient | None,
+    instruction_rewriter: Any | None,
     writer: ProbeDatasetWriter,
     exec_rng: np.random.Generator,
     action_plan: collections.deque[np.ndarray],
@@ -361,6 +363,7 @@ def _sample_and_enqueue_action(
             "source_instruction": source_instruction,
             "policy_instruction": policy_instruction,
             "instruction_rewriter_enabled": instruction_rewriter is not None,
+            "instruction_rewriter_socket": args.instruction_rewriter_socket,
             "instruction_rewriter_source": args.instruction_rewriter_source,
             "base_index": base_index,
             "condition_index": condition.get("condition_index"),
@@ -469,7 +472,9 @@ def _select_instruction_source(
     raise ValueError(f"Unknown instruction_rewriter_source strategy: {strategy}")
 
 
-def _build_instruction_rewriter(args: ConditionCollectorArgs) -> QwenVLMRewriteClient | None:
+def _build_instruction_rewriter(args: ConditionCollectorArgs) -> Any | None:
+    if args.instruction_rewriter_socket:
+        return QwenSocketRewriteClient(args.instruction_rewriter_socket)
     if not args.instruction_rewriter_model_dir:
         return None
     return QwenVLMRewriteClient(
@@ -511,6 +516,7 @@ def _report(
         "k_samples": args.k_samples,
         "num_trials_per_condition": args.num_trials_per_condition,
         "instruction_rewriter_model_dir": args.instruction_rewriter_model_dir,
+        "instruction_rewriter_socket": args.instruction_rewriter_socket,
         "instruction_rewriter_source": args.instruction_rewriter_source,
     }
 
@@ -537,6 +543,7 @@ def _parse_args() -> ConditionCollectorArgs:
     parser.add_argument("--manifest-name", default="records.jsonl")
     parser.add_argument("--checkpoint-uri", default="gs://openpi-assets/checkpoints/pi05_libero")
     parser.add_argument("--policy-name", default="pi05_libero")
+    parser.add_argument("--instruction-rewriter-socket")
     parser.add_argument("--instruction-rewriter-model-dir")
     parser.add_argument("--instruction-rewriter-source", choices=["original", "condition"], default="original")
     parser.add_argument("--instruction-rewriter-max-new-tokens", type=int, default=96)
@@ -567,6 +574,7 @@ def _parse_args() -> ConditionCollectorArgs:
         checkpoint_uri=namespace.checkpoint_uri,
         policy_name=namespace.policy_name,
         resume=namespace.resume,
+        instruction_rewriter_socket=namespace.instruction_rewriter_socket,
         instruction_rewriter_model_dir=namespace.instruction_rewriter_model_dir,
         instruction_rewriter_source=namespace.instruction_rewriter_source,
         instruction_rewriter_max_new_tokens=namespace.instruction_rewriter_max_new_tokens,
