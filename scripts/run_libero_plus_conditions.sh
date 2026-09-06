@@ -40,8 +40,9 @@ fi
 cd "$OPENPI_ROOT"
 
 mkdir -p "$PROBE_ROOT/logs/libero_plus_conditions" "$PROBE_ROOT/tmp/qwen-ipc" "$OPENPI_ROOT/configs" "$OPENPI_ROOT/probe"
-rsync -a "$PROBE_ROOT/probe/" "$OPENPI_ROOT/probe/"
-rsync -a "$PROBE_ROOT/configs/" "$OPENPI_ROOT/configs/"
+RSYNC_CODE_ARGS=(--archive --no-perms --no-owner --no-group --omit-dir-times --exclude='__pycache__/' --exclude='*.pyc')
+rsync "${RSYNC_CODE_ARGS[@]}" "$PROBE_ROOT/probe/" "$OPENPI_ROOT/probe/"
+rsync "${RSYNC_CODE_ARGS[@]}" "$PROBE_ROOT/configs/" "$OPENPI_ROOT/configs/"
 
 if [[ -n "$INSTRUCTION_REWRITER_SOCKET_HOST" ]]; then
   echo "Waiting for Qwen rewriter socket at $INSTRUCTION_REWRITER_SOCKET_HOST ..."
