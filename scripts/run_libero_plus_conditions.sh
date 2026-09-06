@@ -119,8 +119,9 @@ docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps \
   -e INSTRUCTION_REWRITER_MAX_NEW_TOKENS="$INSTRUCTION_REWRITER_MAX_NEW_TOKENS" \
   -e INSTRUCTION_REWRITER_TEMPERATURE="$INSTRUCTION_REWRITER_TEMPERATURE" \
   -e INSTRUCTION_REWRITER_TOP_P="$INSTRUCTION_REWRITER_TOP_P" \
+  --entrypoint /.venv/bin/python \
   runtime \
-  /.venv/bin/python -m probe.rollout.collect_condition_calls \
+  -m probe.rollout.collect_condition_calls \
   --conditions "$CONDITIONS_PATH" \
   --output-dir "$OUTPUT_DIR" \
   --host 0.0.0.0 \
@@ -133,8 +134,10 @@ docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps \
   --probe-seed-start "$PROBE_SEED_START" \
   "${EXTRA_ARGS[@]}"
 
-docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps runtime \
-  /.venv/bin/python -m probe.data.validate_week1 \
+docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps \
+  --entrypoint /.venv/bin/python \
+  runtime \
+  -m probe.data.validate_week1 \
   --dataset "$OUTPUT_DIR" \
   --min-records "$MIN_RECORDS" \
   --min-failure-fraction "$MIN_FAILURE_FRACTION" \
