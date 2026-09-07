@@ -64,6 +64,18 @@ class QwenSocketRewriteClient:
                 error=str(response["error"]) if response.get("error") else None,
                 request_id=str(response["request_id"]) if response.get("request_id") else None,
                 elapsed_ms=float(response["elapsed_ms"]) if response.get("elapsed_ms") is not None else None,
+                short_term_goal=str(response.get("short_term_goal") or ""),
+                source_spans=tuple(
+                    str(span) for span in response.get("source_spans", [])
+                    if str(span).strip()
+                ),
+                uncertain=bool(response.get("uncertain", False)),
+                rewrite_accepted=bool(response.get("rewrite_accepted", False)),
+                rejection_reason=(
+                    str(response["rejection_reason"])
+                    if response.get("rejection_reason")
+                    else None
+                ),
             )
         except Exception as exc:
             LOGGER.warning("Qwen socket rewrite failed: %s", exc)
@@ -72,6 +84,7 @@ class QwenSocketRewriteClient:
                 source_instruction=str(source_instruction),
                 model="qwen-socket",
                 error=str(exc),
+                rejection_reason="rewrite_call_failed",
             )
 
     def _request(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -167,6 +180,11 @@ class QwenSocketRewriteServer:
                 "error": result.error,
                 "request_id": result.request_id,
                 "elapsed_ms": result.elapsed_ms,
+                "short_term_goal": result.short_term_goal,
+                "source_spans": list(result.source_spans),
+                "uncertain": result.uncertain,
+                "rewrite_accepted": result.rewrite_accepted,
+                "rejection_reason": result.rejection_reason,
                 "server_elapsed_ms": (time.perf_counter() - started) * 1000.0,
             }
         except Exception as exc:  # pragma: no cover - model/runtime dependent

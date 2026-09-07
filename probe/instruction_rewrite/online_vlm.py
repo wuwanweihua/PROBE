@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,7 @@ import numpy as np
 from probe.instruction_rewrite.prompts import (
     ONLINE_REWRITE_SYSTEM_PROMPT,
     build_online_rewrite_prompt,
+    clean_robot_instruction,
 )
 
 
@@ -26,6 +28,11 @@ class RewriteResult:
     error: str | None = None
     request_id: str | None = None
     elapsed_ms: float | None = None
+    short_term_goal: str = ""
+    source_spans: tuple[str, ...] = ()
+    uncertain: bool = False
+    rewrite_accepted: bool = False
+    rejection_reason: str | None = None
 
     def to_metadata(self) -> dict[str, Any]:
         metadata: dict[str, Any] = {
@@ -33,6 +40,11 @@ class RewriteResult:
             "rewrite_instruction": self.instruction,
             "rewrite_raw_text": self.raw_text,
             "rewrite_source_instruction": self.source_instruction,
+            "rewrite_short_term_goal": self.short_term_goal,
+            "rewrite_source_spans": list(self.source_spans),
+            "rewrite_uncertain": self.uncertain,
+            "rewrite_accepted": self.rewrite_accepted,
+            "rewrite_rejected": not self.rewrite_accepted,
         }
         if self.error:
             metadata["rewrite_error"] = self.error
@@ -40,6 +52,8 @@ class RewriteResult:
             metadata["rewrite_request_id"] = self.request_id
         if self.elapsed_ms is not None:
             metadata["rewrite_elapsed_ms"] = round(float(self.elapsed_ms), 3)
+        if self.rejection_reason:
+            metadata["rewrite_rejection_reason"] = self.rejection_reason
         return {key: value for key, value in metadata.items() if value not in (None, "")}
 
 
@@ -98,6 +112,7 @@ class QwenVLMRewriteClient:
                 source_instruction=str(source_instruction),
                 model=Path(self.model_dir).name,
                 error=str(exc),
+                rejection_reason="rewrite_call_failed",
             )
 
     def _ensure_loaded(self) -> None:
@@ -190,14 +205,19 @@ class QwenVLMRewriteClient:
             skip_special_tokens=True,
             clean_up_tokenization_spaces=False,
         )[0].strip()
-        instruction = _extract_instruction_text(decoded) or str(source_instruction)
+        parsed = _parse_online_output(decoded, source_instruction)
         return RewriteResult(
-            instruction=instruction,
+            instruction=parsed["instruction"],
             raw_text=decoded,
             model=Path(self.model_dir).name,
             source_instruction=str(source_instruction),
             request_id=request_id,
             elapsed_ms=elapsed_ms,
+            short_term_goal=parsed["short_term_goal"],
+            source_spans=parsed["source_spans"],
+            uncertain=parsed["uncertain"],
+            rewrite_accepted=parsed["rewrite_accepted"],
+            rejection_reason=parsed["rejection_reason"],
         )
 
 
@@ -248,6 +268,73 @@ def _extract_instruction_text(text: str) -> str:
             break
     first = first.strip("\"' ")
     return " ".join(first.split())
+
+
+def _parse_online_output(text: str, source_instruction: str) -> dict[str, Any]:
+    """Parse one observation-aware rewrite without semantic heuristics."""
+
+    source = clean_robot_instruction(source_instruction)
+    payload = _parse_json_object(text)
+    structured = isinstance(payload, dict)
+    if structured:
+        goal = str(payload.get("short_term_goal") or payload.get("instruction") or "").strip()
+        raw_spans = payload.get("source_spans")
+        if isinstance(raw_spans, list):
+            spans = tuple(str(span).strip() for span in raw_spans if str(span).strip())
+        else:
+            spans = ()
+        uncertain = _as_bool(payload.get("uncertain"))
+    else:
+        goal = _extract_instruction_text(text)
+        spans = ()
+        uncertain = False
+
+    accepted = structured and bool(goal)
+    reason = None if accepted else ("empty_short_term_goal" if structured else "unstructured_output")
+    instruction = _compose_policy_instruction(source, goal) if accepted else source
+    return {
+        "instruction": instruction,
+        "short_term_goal": goal,
+        "source_spans": spans,
+        "uncertain": uncertain,
+        "rewrite_accepted": accepted,
+        "rejection_reason": reason,
+    }
+
+
+def _parse_json_object(text: str) -> dict[str, Any] | None:
+    cleaned = str(text).strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines and lines[0].strip().lower() in {"```", "```json"}:
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start < 0 or end <= start:
+            return None
+        try:
+            payload = json.loads(cleaned[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _compose_policy_instruction(source: str, short_term_goal: str) -> str:
+    return f"Overall task: {source}. Immediate next step: {short_term_goal}."
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes"}
+    return bool(value)
 
 
 def _request_id(

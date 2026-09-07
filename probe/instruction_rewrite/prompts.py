@@ -20,13 +20,23 @@ Do not include benchmark metadata such as view numbers, camera settings, seeds, 
 Return only JSON that matches the requested schema."""
 
 
-ONLINE_REWRITE_SYSTEM_PROMPT = """You rewrite a robot manipulation instruction using the current observation as context.
-Preserve the exact task goal, object identities, colors, receptacles, spatial relations, action order, and success condition.
-Use the observation to make the instruction clearer and more actionable for a vision-language-action policy.
-You may rewrite with synonym substitution, word-order changes, concise rephrasing, or direct command style.
-Do not add new objects, change the goal, change the required final state, or introduce benchmark metadata.
-Do not mention camera names, view ids, seeds, initstate ids, or hidden reasoning.
-Return only the rewritten instruction text."""
+ONLINE_REWRITE_SYSTEM_PROMPT = """You are a conservative robot-instruction editor.
+The source instruction is authoritative and describes the only task that may be performed.
+Keep the overall task, every object identity, color, quantity, receptacle, spatial relation,
+action, action order, and final success condition unchanged.
+
+Use the observation only to choose one short-term goal for the next few actions.
+Do not identify, rename, or substitute objects from visual appearance. If the image seems to
+conflict with the source instruction, trust the source instruction.
+The short-term goal must be a necessary subgoal of the source instruction and must not invent
+objects, locations, actions, or completion claims. If you are uncertain, set uncertain to true.
+
+Return exactly one JSON object with this schema:
+{"short_term_goal":"...","source_spans":["..."],"uncertain":false}
+
+Every source_span must be copied verbatim from the source instruction. Keep the short-term goal
+concise and atomic. Do not include explanations, markdown, camera names, view ids, seeds,
+initstate ids, or hidden reasoning."""
 
 
 CONDITION_SYSTEM_PROMPT = """You create two controlled language conditions for a robot manipulation benchmark.
@@ -148,22 +158,30 @@ def build_online_rewrite_prompt(
         "source_instruction": clean_instruction,
         "raw_benchmark_instruction": source_instruction,
         "rewrite_goal": (
-            "Rewrite the instruction so it is easier for a robot policy to follow "
-            "from the current observation, while preserving the exact semantics."
+            "Keep the source instruction as the overall task and add one conservative, "
+            "observation-grounded short-term goal for the next few actions."
         ),
         "requirements": [
-            "Keep the same objects, colors, target receptacles, spatial relations, and final success condition.",
-            "Do not add or remove manipulation steps unless they are already logically required by the task.",
-            "Do not mention view numbers, seeds, or initstate metadata.",
-            "Return a single instruction only.",
+            "The source instruction is authoritative; never rename or substitute an object.",
+            "Keep the overall task, object identities, colors, quantities, locations, actions, order, and final state unchanged.",
+            "Choose exactly one necessary atomic subgoal for the next few actions.",
+            "Copy important object and location phrases into source_spans exactly as they appear in the source.",
+            "Do not identify objects from the image when the source already names them.",
+            "If uncertain or if no safe subgoal can be selected, set uncertain=true and use an empty short_term_goal.",
+            "Return exactly one JSON object and no explanation.",
         ],
+        "output_schema": {
+            "short_term_goal": "string",
+            "source_spans": "array of exact substrings copied from source_instruction",
+            "uncertain": "boolean",
+        },
     }
     if state_summary is not None:
         payload["robot_state_summary"] = state_summary
     return (
         "Rewrite the robot instruction using the current observation as context.\n"
         "The current observation images are attached separately to this request.\n"
-        "Return only the rewritten instruction.\n"
+        "Return only the JSON object described by output_schema.\n"
         "Input:\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
