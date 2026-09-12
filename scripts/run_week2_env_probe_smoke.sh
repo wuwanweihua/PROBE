@@ -16,6 +16,7 @@ OUTPUT_DIR="${OUTPUT_DIR:?set OUTPUT_DIR to the Week 2 output directory}"
 LABELS_PATH="${LABELS_PATH:-}"
 MAX_BASE_STATES="${MAX_BASE_STATES:-2}"
 K_SAMPLES="${K_SAMPLES:-4}"
+CAPTURE_B="${CAPTURE_B:-1}"
 TASK_SUITE="${TASK_SUITE:-libero_10}"
 CHECKPOINT_URI="${CHECKPOINT_URI:-gs://openpi-assets/checkpoints/pi05_libero}"
 
@@ -88,6 +89,9 @@ RUN_ARGS=(
   --max-base-states "$MAX_BASE_STATES"
   --checkpoint-uri "$CHECKPOINT_URI"
 )
+if [[ "$CAPTURE_B" == "1" ]]; then
+  RUN_ARGS+=(--capture-b)
+fi
 if [[ -n "$TASK_IDS" ]]; then
   RUN_ARGS+=(--task-ids "$TASK_IDS")
   if [[ -n "$ORIGINAL_SUCCESS_JSON" ]]; then

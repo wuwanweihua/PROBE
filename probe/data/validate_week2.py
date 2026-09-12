@@ -14,6 +14,7 @@ def validate_dataset(
     dataset_dir: str | Path,
     expected_k: int = 4,
     expected_conditions: tuple[str, ...] = ("original", "better", "worse"),
+    require_b: bool = False,
 ) -> tuple[bool, dict[str, Any]]:
     root = Path(dataset_dir)
     manifest_path = root / "manifest.jsonl"
@@ -42,8 +43,10 @@ def validate_dataset(
     by_base: dict[str, set[str]] = {}
     shapes: set[tuple[int, ...]] = set()
     for index, record in enumerate(records, start=1):
-        if record.get("non_executing") is not True:
-            report["errors"].append(f"Record {index}: non_executing is not true")
+        if record.get("non_executing_after_capture") is not True:
+            report["errors"].append(
+                f"Record {index}: non_executing_after_capture is not true"
+            )
         if record.get("probe_rng_control") != "server_default_internal_split":
             report["warnings"].append(
                 f"Record {index}: unexpected probe_rng_control value"
@@ -61,6 +64,29 @@ def validate_dataset(
             continue
         if not observation_path.exists():
             report["errors"].append(f"Record {index}: missing {observation_path}")
+        b_feature_ref = record.get("b_feature_path")
+        if require_b and not b_feature_ref:
+            report["errors"].append(f"Record {index}: missing b_feature_path")
+        if b_feature_ref:
+            b_feature_path = root / str(b_feature_ref)
+            if not b_feature_path.exists():
+                report["errors"].append(f"Record {index}: missing {b_feature_path}")
+            else:
+                try:
+                    with np.load(b_feature_path, allow_pickle=False) as data:
+                        b_feature = np.asarray(data["b_feature"])
+                    if b_feature.ndim != 1:
+                        report["errors"].append(
+                            f"Record {index}: B feature is not 1-D: {b_feature.shape}"
+                        )
+                    if not np.isfinite(b_feature).all():
+                        report["errors"].append(
+                            f"Record {index}: B feature is not finite"
+                        )
+                except Exception as exc:
+                    report["errors"].append(
+                        f"Record {index}: cannot read B feature: {exc}"
+                    )
         try:
             with np.load(action_path, allow_pickle=False) as data:
                 samples = np.asarray(data["action_samples"])
@@ -97,11 +123,17 @@ def main() -> None:
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--expected-k", type=int, default=4)
     parser.add_argument("--expected-conditions", default="original,better,worse")
+    parser.add_argument("--require-b", action="store_true")
     args = parser.parse_args()
     conditions = tuple(
         value.strip() for value in args.expected_conditions.split(",") if value.strip()
     )
-    ok, report = validate_dataset(args.dataset, args.expected_k, conditions)
+    ok, report = validate_dataset(
+        args.dataset,
+        args.expected_k,
+        conditions,
+        require_b=args.require_b,
+    )
     print(json.dumps(report, indent=2, ensure_ascii=False))
     raise SystemExit(0 if ok else 1)
 

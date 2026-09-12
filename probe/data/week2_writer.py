@@ -55,6 +55,18 @@ class Week2ProbeWriter:
         )
         return path.relative_to(self.dataset_dir).as_posix()
 
+    def write_b_feature(self, record_id: str, feature: Any) -> str:
+        feature_dir = self.dataset_dir / "features" / "B"
+        feature_dir.mkdir(parents=True, exist_ok=True)
+        path = feature_dir / f"{record_id}.npz"
+        vector = np.asarray(feature)
+        np.savez_compressed(
+            path,
+            b_feature=vector,
+            feature_shape=np.asarray(vector.shape, dtype=np.int64),
+        )
+        return path.relative_to(self.dataset_dir).as_posix()
+
     def append(self, payload: dict[str, Any]) -> None:
         with self.manifest_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")

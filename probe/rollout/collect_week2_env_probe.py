@@ -201,7 +201,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
 
         task = task_suite.get_task(task_id)
         initial_states = task_suite.get_task_init_states(task_id)
-        if not initial_states:
+        if initial_states is None or len(initial_states) == 0:
             raise ValueError(f"Task {task_id} has no initial states")
         init_state_slot = int(args.init_state_index) % len(initial_states)
         exec_seed = int(args.exec_seed_start) + base_index
@@ -252,10 +252,23 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 sample_started = time.perf_counter()
                 try:
-                    samples, sample_times = client.sample_action_chunks_with_timing(
-                        policy_element,
-                        k=args.k_samples,
-                    )
+                    if args.capture_b:
+                        (
+                            samples,
+                            sample_times,
+                            b_feature,
+                            b_feature_metadata,
+                        ) = client.sample_action_chunks_with_feature_timing(
+                            policy_element,
+                            k=args.k_samples,
+                        )
+                    else:
+                        samples, sample_times = client.sample_action_chunks_with_timing(
+                            policy_element,
+                            k=args.k_samples,
+                        )
+                        b_feature = None
+                        b_feature_metadata = {}
                 except Exception:
                     failed += 1
                     LOGGER.exception("Probe failed for %s", record_id)
@@ -276,6 +289,11 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
                     captured_obs,
                 )
                 actions_path = writer.write_actions(record_id, samples)
+                b_feature_path = (
+                    writer.write_b_feature(record_id, b_feature)
+                    if b_feature is not None
+                    else None
+                )
                 label = _label_for(labels, base_id, task_id, condition_id)
                 successes = label.get("eval_successes", label.get("successes"))
                 trials = label.get("eval_trials", label.get("trials"))
@@ -299,6 +317,23 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
                 "conditions_source": str(condition_path) if condition_path else "libero_task_definition",
                         "observation_path": observation_path,
                         "action_samples_path": actions_path,
+                        "b_feature_path": b_feature_path,
+                        "b_feature_type": (
+                            b_feature_metadata.get("feature_type")
+                            if b_feature is not None
+                            else None
+                        ),
+                        "b_feature_shape": (
+                            list(np.asarray(b_feature).shape)
+                            if b_feature is not None
+                            else None
+                        ),
+                        "b_feature_dtype": (
+                            str(np.asarray(b_feature).dtype)
+                            if b_feature is not None
+                            else None
+                        ),
+                        "b_feature_metadata": b_feature_metadata,
                         "policy_call_index": 0,
                         "step": 1,
                         "source_step_idx": args.num_steps_wait,
@@ -352,6 +387,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         "num_failed_records": failed,
         "action_shapes": [list(shape) for shape in sorted(shapes)],
         "k_samples": args.k_samples,
+        "capture_b": bool(args.capture_b),
         "step": 1,
         "num_steps_wait": args.num_steps_wait,
         "non_executing_after_capture": True,
@@ -382,6 +418,11 @@ def main() -> None:
     parser.add_argument("--env-resolution", type=int, default=256)
     parser.add_argument("--resize-size", type=int, default=224)
     parser.add_argument("--k-samples", type=int, default=32)
+    parser.add_argument(
+        "--capture-b",
+        action="store_true",
+        help="Request a server-side B feature on the first action sample.",
+    )
     parser.add_argument("--max-base-states", type=int)
     parser.add_argument("--exec-seed-start", type=int, default=700_000)
     parser.add_argument("--checkpoint-uri", default="gs://openpi-assets/checkpoints/pi05_libero")
