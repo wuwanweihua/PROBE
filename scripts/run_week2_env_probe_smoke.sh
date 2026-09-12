@@ -9,7 +9,9 @@ RUNTIME_GPU_ID="${RUNTIME_GPU_ID:-$GPU_ID}"
 SERVER_GPU_ID="${SERVER_GPU_ID:-$GPU_ID}"
 PORT="${PORT:-18320}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-week2_env_probe_gpu${GPU_ID}}"
-CONDITIONS_PATH="${CONDITIONS_PATH:?set CONDITIONS_PATH to the boundary condition JSONL}"
+CONDITIONS_PATH="${CONDITIONS_PATH:-}"
+TASK_IDS="${TASK_IDS:-}"
+ORIGINAL_SUCCESS_JSON="${ORIGINAL_SUCCESS_JSON:-}"
 OUTPUT_DIR="${OUTPUT_DIR:?set OUTPUT_DIR to the Week 2 output directory}"
 LABELS_PATH="${LABELS_PATH:-}"
 MAX_BASE_STATES="${MAX_BASE_STATES:-2}"
@@ -42,11 +44,23 @@ COMPOSE_ARGS=(
 test -f "$OPENPI_ROOT/examples/libero/compose.yml"
 test -f "$PROBE_ROOT/scripts/compose.gpu-device.override.yml"
 test -f "$PROBE_ROOT/scripts/compose.libero-plus.override.yml"
-test -f "$CONDITIONS_PATH"
+if [[ -n "$TASK_IDS" ]]; then
+  CONDITION_TYPES="${CONDITION_TYPES:-original}"
+  if [[ "$CONDITION_TYPES" != "original" ]]; then
+    echo "TASK_IDS mode supports only CONDITION_TYPES=original" >&2
+    exit 1
+  fi
+elif [[ -n "$CONDITIONS_PATH" ]]; then
+  CONDITION_TYPES="${CONDITION_TYPES:-original,better,worse}"
+  test -f "$CONDITIONS_PATH"
+else
+  echo "Set TASK_IDS or CONDITIONS_PATH" >&2
+  exit 1
+fi
 
 echo "Expected policy server args: $SERVER_ARGS"
 docker compose -p "$COMPOSE_PROJECT_NAME" "${COMPOSE_ARGS[@]}" config \
-  | grep -F -- "--policy.config pi05_libero" >/dev/null \
+  | grep -E -- "pi05_libero|policy\.config[= ]+pi05_libero" >/dev/null \
   || { echo "compose config does not contain pi05_libero"; exit 1; }
 
 docker compose -p "$COMPOSE_PROJECT_NAME" "${COMPOSE_ARGS[@]}" down --remove-orphans || true
@@ -65,22 +79,32 @@ docker compose -p "$COMPOSE_PROJECT_NAME" "${COMPOSE_ARGS[@]}" logs openpi_serve
   || { echo "server log did not confirm pi05_libero"; exit 1; }
 
 RUN_ARGS=(
-  --conditions /app/week2_conditions.jsonl
   --output-dir /app/week2_output
   --host 0.0.0.0
   --port "$PORT"
   --task-suite-name "$TASK_SUITE"
-  --condition-types original,better,worse
+  --condition-types "$CONDITION_TYPES"
   --k-samples "$K_SAMPLES"
   --max-base-states "$MAX_BASE_STATES"
   --checkpoint-uri "$CHECKPOINT_URI"
 )
+if [[ -n "$TASK_IDS" ]]; then
+  RUN_ARGS+=(--task-ids "$TASK_IDS")
+  if [[ -n "$ORIGINAL_SUCCESS_JSON" ]]; then
+    RUN_ARGS+=(--original-success-json "$ORIGINAL_SUCCESS_JSON")
+  fi
+else
+  RUN_ARGS+=(--conditions /app/week2_conditions.jsonl)
+fi
 if [[ -n "$LABELS_PATH" ]]; then
   RUN_ARGS+=(--labels /app/week2_labels.jsonl)
 fi
 
 mkdir -p "$OUTPUT_DIR"
-MOUNTS=(-v "$CONDITIONS_PATH:/app/week2_conditions.jsonl:ro" -v "$OUTPUT_DIR:/app/week2_output")
+MOUNTS=(-v "$OUTPUT_DIR:/app/week2_output")
+if [[ -n "$CONDITIONS_PATH" ]]; then
+  MOUNTS+=(-v "$CONDITIONS_PATH:/app/week2_conditions.jsonl:ro")
+fi
 if [[ -n "$LABELS_PATH" ]]; then
   MOUNTS+=(-v "$LABELS_PATH:/app/week2_labels.jsonl:ro")
 fi

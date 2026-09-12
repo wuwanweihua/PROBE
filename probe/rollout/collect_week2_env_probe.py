@@ -94,17 +94,85 @@ def _label_for(
     return {}
 
 
+def _parse_task_ids(value: str | None) -> list[int]:
+    if not value:
+        return []
+    return [int(part.strip()) for part in value.split(",") if part.strip()]
+
+
+def _build_original_batches(
+    task_suite: Any,
+    task_ids: list[int],
+) -> list[dict[str, Any]]:
+    batches: list[dict[str, Any]] = []
+    for task_id in task_ids:
+        task = task_suite.get_task(task_id)
+        instruction = str(task.language)
+        batches.append(
+            {
+                "task_id": task_id,
+                "base_id": f"task{task_id:04d}",
+                "task_name": instruction,
+                "original_instruction": instruction,
+                "conditions": [
+                    {
+                        "condition_id": "original",
+                        "condition_type": "original",
+                        "instruction": instruction,
+                    }
+                ],
+            }
+        )
+    return batches
+
+
+def _inline_original_labels(value: str | None) -> dict[str, dict[str, dict[str, Any]]]:
+    if not value:
+        return {}
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise ValueError("--original-success-json must be a JSON object")
+    labels: dict[str, dict[str, dict[str, Any]]] = {}
+    for task_id, successes in parsed.items():
+        count = int(successes)
+        labels[str(task_id)] = {
+            "original": {
+                "eval_successes": count,
+                "eval_trials": 8,
+                "eval_success_rate": count / 8.0,
+            }
+        }
+    return labels
+
+
 def collect(args: argparse.Namespace) -> dict[str, Any]:
-    condition_path = Path(args.conditions)
-    batches = _read_condition_batches(condition_path, args.max_base_states)
+    task_suite = get_task_suite(args.task_suite_name)
+    task_ids = _parse_task_ids(args.task_ids)
+    if task_ids:
+        if tuple(value.strip() for value in args.condition_types.split(",") if value.strip()) != (
+            "original",
+        ):
+            raise ValueError("--task-ids mode supports only --condition-types original")
+        batches = _build_original_batches(task_suite, task_ids)
+        condition_path = None
+    else:
+        if not args.conditions:
+            raise ValueError("provide either --conditions or --task-ids")
+        condition_path = Path(args.conditions)
+        batches = _read_condition_batches(condition_path, args.max_base_states)
+
+    if args.max_base_states is not None:
+        batches = batches[: args.max_base_states]
     labels = _load_optional_labels(args.labels)
+    labels_inline = _inline_original_labels(args.original_success_json)
+    for base_id, condition_labels in labels_inline.items():
+        labels.setdefault(base_id, {}).update(condition_labels)
     wanted = tuple(value.strip() for value in args.condition_types.split(",") if value.strip())
     if not wanted:
         raise ValueError("condition-types must not be empty")
 
     writer = Week2ProbeWriter(args.output_dir)
     completed = writer.completed_record_ids() if args.resume else set()
-    task_suite = get_task_suite(args.task_suite_name)
     client = Pi05Client(args.host, args.port)
 
     written = 0
@@ -228,7 +296,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
                         ),
                         "condition_id": condition_id,
                         "instruction": instruction,
-                        "conditions_source": str(condition_path),
+                "conditions_source": str(condition_path) if condition_path else "libero_task_definition",
                         "observation_path": observation_path,
                         "action_samples_path": actions_path,
                         "policy_call_index": 0,
@@ -275,7 +343,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
                 LOGGER.exception("Failed to close environment for task %s", task_id)
 
     return {
-        "conditions": str(condition_path),
+        "conditions": str(condition_path) if condition_path else "libero_task_definition",
         "output_dir": str(args.output_dir),
         "num_condition_batches": len(batches),
         "num_captured_states": captured,
@@ -294,13 +362,21 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--conditions", required=True)
+    parser.add_argument("--conditions")
+    parser.add_argument(
+        "--task-ids",
+        help="Comma-separated LIBERO task IDs. In this mode only original is collected.",
+    )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--task-suite-name", default="libero_10")
     parser.add_argument("--condition-types", default="original,better,worse")
     parser.add_argument("--labels")
+    parser.add_argument(
+        "--original-success-json",
+        help='Inline JSON object mapping task_id to success count out of 8.',
+    )
     parser.add_argument("--init-state-index", type=int, default=0)
     parser.add_argument("--num-steps-wait", type=int, default=10)
     parser.add_argument("--env-resolution", type=int, default=256)
