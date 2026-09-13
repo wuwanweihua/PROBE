@@ -15,17 +15,17 @@ Every head returns one raw logit. The reported probability is
 The implementation evaluates this through `logsigmoid`, without explicitly
 taking `log(sigmoid(logit))`.
 
-Two model kinds are trained by default:
+The default run trains only the nonlinear MLP:
 
 ```text
-linear: input -> 1
 mlp:    input -> 64 -> GELU -> 32 -> GELU -> 1
 ```
 
 The MLP has dropout `0.1`, AdamW optimization, a maximum of 200 epochs, and
-validation early stopping with patience 20. Three seeds are run by default;
+validation early stopping with patience 40. Three seeds are run by default;
 the seed with the lowest validation NLL is selected for the main predictions.
-The linear model remains the required baseline.
+The linear model remains available with `--model-type linear` or
+`--model-type both`, but is not trained by the default command.
 
 ## Feature variants
 
@@ -57,11 +57,11 @@ python -m probe.data.train_week3_predictors \
   --methods A B S B+S \
   --s-k 4 8 16 32 \
   --pca-dim 64 \
-  --model-type both \
+  --model-type mlp \
   --hidden-dims 64,32 \
   --dropout 0.1 \
   --max-epochs 200 \
-  --patience 20 \
+  --patience 40 \
   --seeds 0 1 2 \
   --device auto
 ```

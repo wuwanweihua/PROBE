@@ -41,6 +41,8 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_METHODS = ("A", "B", "S", "B+S")
 DEFAULT_S_K = (4, 8, 16, 32)
 DEFAULT_SEEDS = (0, 1, 2)
+DEFAULT_MODEL_TYPE = "mlp"
+DEFAULT_PATIENCE = 40
 EPSILON = 1e-6
 
 
@@ -919,11 +921,15 @@ def main() -> None:
     )
     parser.add_argument("--s-k", type=int, nargs="+", default=list(DEFAULT_S_K))
     parser.add_argument("--pca-dim", type=int, default=64)
-    parser.add_argument("--model-type", choices=("linear", "mlp", "both"), default="both")
+    parser.add_argument(
+        "--model-type",
+        choices=("linear", "mlp", "both"),
+        default=DEFAULT_MODEL_TYPE,
+    )
     parser.add_argument("--hidden-dims", type=parse_hidden_dims, default=(64, 32))
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--max-epochs", type=int, default=200)
-    parser.add_argument("--patience", type=int, default=20)
+    parser.add_argument("--patience", type=int, default=DEFAULT_PATIENCE)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--seeds", type=int, nargs="+", default=list(DEFAULT_SEEDS))
