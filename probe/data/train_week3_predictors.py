@@ -674,26 +674,32 @@ def selection_rows(
                 -("original", "better", "worse").index(condition),
             ),
         )
-        oracle_condition = max(
-            ("original", "better", "worse"),
-            key=lambda condition: (
-                float(
-                    by_condition[condition][1].get("eval_success_rate")
-                    or (
-                        by_condition[condition][1]["eval_successes"]
-                        / by_condition[condition][1]["eval_trials"]
-                    )
-                ),
-                -("original", "better", "worse").index(condition),
-            ),
-        )
+        condition_order = ("original", "better", "worse")
+        empirical_rates = {
+            condition: float(
+                by_condition[condition][1]["eval_successes"]
+                / by_condition[condition][1]["eval_trials"]
+            )
+            for condition in condition_order
+        }
+        oracle_rate = max(empirical_rates.values())
+        # Ties are genuine equally-good choices. Keep a deterministic
+        # representative for backwards-compatible reporting, but score every
+        # condition whose observed rate reaches the maximum as correct.
+        oracle_conditions = [
+            condition
+            for condition in condition_order
+            if math.isclose(
+                empirical_rates[condition],
+                oracle_rate,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        ]
+        oracle_condition = oracle_conditions[0]
         selected_record = by_condition[predicted_condition][1]
-        oracle_record = by_condition[oracle_condition][1]
         selected_rate = float(
             selected_record["eval_successes"] / selected_record["eval_trials"]
-        )
-        oracle_rate = float(
-            oracle_record["eval_successes"] / oracle_record["eval_trials"]
         )
         rows.append(
             {
@@ -702,7 +708,8 @@ def selection_rows(
                 "split": split,
                 "predicted_condition": predicted_condition,
                 "oracle_condition": oracle_condition,
-                "selection_correct": predicted_condition == oracle_condition,
+                "oracle_conditions": oracle_conditions,
+                "selection_correct": predicted_condition in oracle_conditions,
                 "selected_empirical_rate": selected_rate,
                 "oracle_empirical_rate": oracle_rate,
                 "empirical_regret": oracle_rate - selected_rate,

@@ -87,4 +87,7 @@ The selected predictions contain the record ID, group, condition, split,
 method, selected seed, predicted probability, and the original `successes`
 and `trials`. `selection_results.jsonl` reports fixed-split condition
 selection and empirical regret; it is an offline diagnostic, not an online
-execution result.
+execution result. If multiple conditions have the same highest observed
+success rate, all of them are included in `oracle_conditions` and count as
+correct selections; `oracle_condition` remains a deterministic representative
+for compatibility.
