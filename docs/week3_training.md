@@ -83,8 +83,9 @@ week3_training/
     metrics.json
 ```
 
-Each `history.json` row contains `epoch`, `train_nll`, `validation_nll`, and
-`test_nll`. Test NLL is recorded for plotting and diagnostics only; it is not
+Each `history.json` row contains `epoch`, `train_nll`, `validation_nll`,
+`test_nll`, and train/validation/test tie-aware accuracy. Test NLL and test
+tie-aware accuracy are recorded for plotting and diagnostics only; neither is
 used for early stopping or seed selection.
 
 To plot the selected-seed curves for the first three experiments and the
@@ -106,6 +107,28 @@ python -m probe.data.plot_week3_loss_curves \
 
 The average is computed separately at each epoch using only runs that reached
 that epoch, because early stopping can make history lengths different.
+
+To plot the corresponding train, validation, and test tie-aware accuracy
+curves:
+
+```bash
+python -m probe.data.plot_week3_tie_accuracy_curves \
+  --run-dir "$PROBE_ROOT/data/week3_loss_curve_runs/week3_training_tie_aware" \
+  "$PROBE_ROOT/data/week3_loss_curve_runs/week3_training_tie_aware_s345" \
+  "$PROBE_ROOT/data/week3_loss_curve_runs/week3_training_tie_aware_s678" \
+  "$PROBE_ROOT/data/week3_loss_curve_runs/week3_training_tie_aware_s091011" \
+  "$PROBE_ROOT/data/week3_loss_curve_runs/week3_training_tie_aware_s121314" \
+  "$PROBE_ROOT/data/week3_loss_curve_runs/week3_training_tie_aware_s151617" \
+  "$PROBE_ROOT/data/week3_loss_curve_runs/week3_training_tie_aware_s181920" \
+  "$PROBE_ROOT/data/week3_loss_curve_runs/week3_training_tie_aware_s212223" \
+  "$PROBE_ROOT/data/week3_loss_curve_runs/week3_training_tie_aware_s242526" \
+  --model-kind mlp \
+  --first-n 3 \
+  --output-dir "$PROBE_ROOT/data/week3_tie_accuracy_curves"
+```
+
+The selected seed is the same validation-NLL-selected seed used by the loss
+curve script. Accuracy curves do not change seed or epoch selection.
 
 The selected predictions contain the record ID, group, condition, split,
 method, selected seed, predicted probability, and the original `successes`

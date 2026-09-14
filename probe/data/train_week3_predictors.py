@@ -612,6 +612,28 @@ def train_one_seed(
                 tensors["successes"][test_index],
                 tensors["trials"][test_index],
             )
+        epoch_probabilities = sigmoid_numpy(
+            all_logits.detach().cpu().numpy()
+        )
+        epoch_selection_rows = selection_rows(
+            dataset.records,
+            dataset.splits,
+            epoch_probabilities,
+            "epoch",
+        )
+        tie_aware_accuracy = {
+            split: (
+                sum(
+                    bool(row["selection_correct"])
+                    for row in epoch_selection_rows
+                    if row["split"] == split
+                )
+                / sum(row["split"] == split for row in epoch_selection_rows)
+                if any(row["split"] == split for row in epoch_selection_rows)
+                else float("nan")
+            )
+            for split in ("train", "validation", "test")
+        }
         train_value = float(train_loss.detach().cpu())
         validation_value = float(validation_loss.detach().cpu())
         test_value = float(test_loss.detach().cpu())
@@ -621,6 +643,9 @@ def train_one_seed(
                 "train_nll": train_value,
                 "validation_nll": validation_value,
                 "test_nll": test_value,
+                "train_tie_aware_accuracy": tie_aware_accuracy["train"],
+                "validation_tie_aware_accuracy": tie_aware_accuracy["validation"],
+                "test_tie_aware_accuracy": tie_aware_accuracy["test"],
             }
         )
         if validation_value < best_val - 1e-8:
