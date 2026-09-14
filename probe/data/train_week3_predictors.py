@@ -359,8 +359,8 @@ def prepare_features(
         )
 
     if method == "B+S":
-        if pca_dim is None or pca_dim <= 0:
-            raise ValueError("B+S requires a positive --pca-dim for the B block")
+        # A non-positive --pca-dim explicitly disables PCA, including for B+S.
+        # This keeps the no-PCA ablation comparable across A, B, and B+S.
         # B occupies the leading 2048 dimensions in the post-processor output.
         # Infer its boundary from the B feature file instead of hard-coding 2048.
         b_dim = dataset.features.shape[1] - 8

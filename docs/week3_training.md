@@ -39,8 +39,10 @@ B+S_K   B concatenated with S_K
 ```
 
 For A and B, standardization and PCA are fitted using the training split only.
-The default PCA output is 64 dimensions. S is standardized without PCA. For
-B+S, PCA is applied only to the B block and the S block is appended afterward.
+The default PCA output is 64 dimensions. Passing `--pca-dim 0` disables PCA and
+keeps the standardized feature at its raw dimension. S is standardized without
+PCA. For B+S, PCA is applied only to the B block and the S block is appended
+afterward; `--pca-dim 0` disables PCA for the B block as well.
 The fixed `splits.json` group assignment is reused; original, better, and worse
 conditions therefore stay in the same split.
 
