@@ -83,6 +83,30 @@ week3_training/
     metrics.json
 ```
 
+Each `history.json` row contains `epoch`, `train_nll`, `validation_nll`, and
+`test_nll`. Test NLL is recorded for plotting and diagnostics only; it is not
+used for early stopping or seed selection.
+
+To plot the selected-seed curves for the first three experiments and the
+average curve across all supplied experiments:
+
+```bash
+python -m probe.data.plot_week3_loss_curves \
+  --run-dir "$PROBE_ROOT/data/week3_training_tie_aware" \
+  "$PROBE_ROOT/data/week3_training_tie_aware_s345" \
+  "$PROBE_ROOT/data/week3_training_tie_aware_s678" \
+  "$PROBE_ROOT/data/week3_training_tie_aware_s091011" \
+  "$PROBE_ROOT/data/week3_training_tie_aware_s121314" \
+  "$PROBE_ROOT/data/week3_training_tie_aware_s151617" \
+  "$PROBE_ROOT/data/week3_training_tie_aware_s181920" \
+  "$PROBE_ROOT/data/week3_training_tie_aware_s212223" \
+  "$PROBE_ROOT/data/week3_training_tie_aware_s242526" \
+  --output-dir "$PROBE_ROOT/data/week3_loss_curves"
+```
+
+The average is computed separately at each epoch using only runs that reached
+that epoch, because early stopping can make history lengths different.
+
 The selected predictions contain the record ID, group, condition, split,
 method, selected seed, predicted probability, and the original `successes`
 and `trials`. `selection_results.jsonl` reports fixed-split condition

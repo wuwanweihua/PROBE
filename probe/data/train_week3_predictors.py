@@ -599,18 +599,28 @@ def train_one_seed(
             validation_index = torch.as_tensor(
                 split_indices["validation"], device=resolved_device
             )
+            test_index = torch.as_tensor(
+                split_indices["test"], device=resolved_device
+            )
             validation_loss = binomial_nll_from_logits(
                 all_logits[validation_index],
                 tensors["successes"][validation_index],
                 tensors["trials"][validation_index],
             )
+            test_loss = binomial_nll_from_logits(
+                all_logits[test_index],
+                tensors["successes"][test_index],
+                tensors["trials"][test_index],
+            )
         train_value = float(train_loss.detach().cpu())
         validation_value = float(validation_loss.detach().cpu())
+        test_value = float(test_loss.detach().cpu())
         history.append(
             {
                 "epoch": epoch,
                 "train_nll": train_value,
                 "validation_nll": validation_value,
+                "test_nll": test_value,
             }
         )
         if validation_value < best_val - 1e-8:
@@ -764,6 +774,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     )
     all_prediction_rows: list[dict[str, Any]] = []
     all_selection_rows: list[dict[str, Any]] = []
+    all_seed_selection_rows: list[dict[str, Any]] = []
     summary: dict[str, Any] = {
         "dataset_dir": str(dataset_dir),
         "output_dir": str(output_dir),
@@ -863,6 +874,14 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                         "metrics": result["metrics"],
                         "probabilities": result["probabilities"],
                     }
+                    for row in selection_rows(
+                        dataset.records,
+                        dataset.splits,
+                        result["probabilities"],
+                        f"{method_name}/{model_kind}",
+                    ):
+                        row["seed"] = int(seed)
+                        all_seed_selection_rows.append(row)
                 selected_seed = min(
                     run_results,
                     key=lambda seed: run_results[seed]["metrics"]["validation"]["binomial_nll"],
@@ -909,6 +928,10 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
 
     write_jsonl(output_dir / "predictions.jsonl", all_prediction_rows)
     write_jsonl(output_dir / "selection_results.jsonl", all_selection_rows)
+    write_jsonl(
+        output_dir / "selection_results_by_seed.jsonl",
+        all_seed_selection_rows,
+    )
     (output_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
