@@ -173,21 +173,29 @@ class ConditionLabel:
 def load_labels(
     path: Path,
     suite: str,
-) -> dict[str, dict[str, ConditionLabel]]:
-    """Map ``base_id -> condition_id -> 12-retry success counts`` for one suite.
+) -> dict[int, dict[str, ConditionLabel]]:
+    """Map ``task_id -> condition_id -> 12-retry success counts`` for one suite.
 
-    Accepts both the task-level format written by the rollout summarizer
-    (``original_successes``/``original_trials`` per row) and the per-record
-    format (``eval_successes``/``eval_trials``), so either label file works.
+    The sweep summarizer keys its rows by ``suite`` + ``task_id`` and carries no
+    ``base_id``, while the rollout records carry both.  Task ids are unique
+    within a suite, so ``task_id`` is the join key that works for both.
+
+    Two row layouts are accepted: the task-level form used by
+    ``all_7suites_12retry_labels.jsonl`` (``original_successes``/``*_trials``)
+    and the per-record form (``condition_id`` + ``eval_successes``/
+    ``eval_trials``).
     """
 
-    labels: dict[str, dict[str, ConditionLabel]] = defaultdict(dict)
+    labels: dict[int, dict[str, ConditionLabel]] = defaultdict(dict)
     for row in read_jsonl(path):
-        if row.get("suite") != suite:
+        if suite and row.get("suite") != suite:
             continue
-        base_id = str(row.get("base_id") or "")
-        if not base_id:
-            raise ValueError(f"{path}: label row without base_id")
+        task_id = _coerce_task_id(row)
+        if task_id is None:
+            raise ValueError(
+                f"{path}: label row has neither an integer task_id nor a "
+                f"parseable base_id"
+            )
 
         if "original_successes" in row:
             for condition in CONDITION_ORDER:
@@ -195,17 +203,34 @@ def load_labels(
                 trials = row.get(f"{condition}_trials")
                 if successes is None or trials is None:
                     raise ValueError(
-                        f"{path}: {base_id} missing {condition} success counts"
+                        f"{path}: task_id={task_id} missing {condition} success counts"
                     )
-                labels[base_id][condition] = ConditionLabel(int(successes), int(trials))
+                labels[task_id][condition] = ConditionLabel(int(successes), int(trials))
         else:
             condition = str(row.get("condition_id") or "")
             if condition not in CONDITION_ORDER:
                 continue
-            labels[base_id][condition] = ConditionLabel(
+            labels[task_id][condition] = ConditionLabel(
                 int(row["eval_successes"]), int(row["eval_trials"])
             )
     return dict(labels)
+
+
+def _coerce_task_id(row: dict[str, Any]) -> int | None:
+    """Read a task id from a label row, falling back to the base_id suffix."""
+
+    raw = row.get("task_id")
+    if raw is not None:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            pass
+    base_id = str(row.get("base_id") or "")
+    if base_id:
+        digits = "".join(ch for ch in base_id.split("task")[-1] if ch.isdigit())
+        if digits:
+            return int(digits)
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -218,9 +243,18 @@ class EpisodeRows:
     episode_id: str
     base_id: str
     condition_id: str
-    task_id: str
+    task_id: int | None
     task_name: str
     rows_by_replan: dict[int, dict[str, Any]]
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def index_episodes(rollout_dir: Path, manifest_name: str) -> list[EpisodeRows]:
@@ -242,7 +276,7 @@ def index_episodes(rollout_dir: Path, manifest_name: str) -> list[EpisodeRows]:
                 episode_id=episode_id,
                 base_id=str(row.get("base_id") or ""),
                 condition_id=condition_id,
-                task_id=str(row.get("task_id") or ""),
+                task_id=_optional_int(row.get("task_id")),
                 task_name=str(row.get("task_name") or ""),
                 rows_by_replan={},
             )
@@ -270,7 +304,7 @@ def resolve(dataset_dir: Path, value: str | None) -> Path | None:
 
 def build_group_rows(
     episodes: list[EpisodeRows],
-    labels: dict[str, dict[str, ConditionLabel]],
+    labels: dict[int, dict[str, ConditionLabel]],
     rollout_dir: Path,
     s_prefixes: tuple[int, ...],
 ) -> tuple[
@@ -306,10 +340,20 @@ def build_group_rows(
                 base_id, sorted(conditions), list(CONDITION_ORDER),
             )
             continue
-        task_labels = labels.get(base_id)
+        # Labels are keyed by integer task_id; the rollout carries both task_id
+        # and base_id, so join on task_id and fall back to the base_id suffix.
+        episode_task_id = conditions[CONDITION_ORDER[0]].task_id
+        lookup_id = episode_task_id
+        if lookup_id is None or lookup_id not in labels:
+            suffix = _optional_int(base_id.split("task")[-1])
+            lookup_id = suffix if suffix in labels else lookup_id
+        task_labels = labels.get(lookup_id) if lookup_id is not None else None
         if not task_labels or set(task_labels) != set(CONDITION_ORDER):
             dropped_tasks.append(base_id)
-            LOGGER.warning("skip %s: missing 12-retry labels", base_id)
+            LOGGER.warning(
+                "skip %s: missing 12-retry labels (looked up task_id=%s)",
+                base_id, lookup_id,
+            )
             continue
 
         # Truncate to the minimum replanning count so the three conditions are

@@ -36,7 +36,7 @@ def test_load_labels_reads_task_level_success_counts(tmp_path):
         [
             {
                 "suite": "object",
-                "base_id": "task0001",
+                "task_id": 1,
                 "original_successes": 7,
                 "original_trials": 12,
                 "better_successes": 10,
@@ -44,15 +44,67 @@ def test_load_labels_reads_task_level_success_counts(tmp_path):
                 "worse_successes": 3,
                 "worse_trials": 12,
             },
-            {"suite": "camera", "base_id": "task9999"},
+            {"suite": "camera", "task_id": 9999},
         ],
     )
 
     labels = load_labels(path, "object")
 
-    assert set(labels) == {"task0001"}
-    assert labels["task0001"]["better"].rate == pytest.approx(10 / 12)
-    assert labels["task0001"]["original"].trials == 12
+    assert set(labels) == {1}
+    assert labels[1]["better"].rate == pytest.approx(10 / 12)
+    assert labels[1]["original"].trials == 12
+
+
+def test_load_labels_matches_the_shipped_sweep_file_layout(tmp_path):
+    # The real all_7suites_12retry_labels.jsonl keys rows by suite + integer
+    # task_id and has no base_id; loading must work without one.
+    path = tmp_path / "labels.jsonl"
+    _write_labels(
+        path,
+        [
+            {
+                "suite": "camera",
+                "task_id": 683,
+                "source_report": "/some/path/records.jsonl",
+                "original_successes": 12,
+                "original_trials": 12,
+                "better_successes": 11,
+                "better_trials": 12,
+                "worse_successes": 12,
+                "worse_trials": 12,
+            }
+        ],
+    )
+
+    labels = load_labels(path, "camera")
+
+    assert labels[683]["original"].rate == pytest.approx(1.0)
+    assert labels[683]["better"].successes == 11
+
+
+def test_load_labels_falls_back_to_the_base_id_suffix(tmp_path):
+    # Older rows may carry only a base_id; the trailing task number is used.
+    path = tmp_path / "labels.jsonl"
+    _write_labels(
+        path,
+        [
+            {
+                "suite": "object",
+                "base_id": "libero_plus_libero_10_task2075",
+                "original_successes": 5,
+                "original_trials": 12,
+                "better_successes": 6,
+                "better_trials": 12,
+                "worse_successes": 7,
+                "worse_trials": 12,
+            }
+        ],
+    )
+
+    labels = load_labels(path, "object")
+
+    assert set(labels) == {2075}
+    assert labels[2075]["worse"].successes == 7
 
 
 def test_load_labels_reads_per_record_success_counts(tmp_path):
@@ -62,14 +114,14 @@ def test_load_labels_reads_per_record_success_counts(tmp_path):
         [
             {
                 "suite": "object",
-                "base_id": "task0001",
+                "task_id": 1,
                 "condition_id": "original",
                 "eval_successes": 6,
                 "eval_trials": 12,
             },
             {
                 "suite": "object",
-                "base_id": "task0001",
+                "task_id": 1,
                 "condition_id": "better",
                 "eval_successes": 9,
                 "eval_trials": 12,
@@ -79,8 +131,8 @@ def test_load_labels_reads_per_record_success_counts(tmp_path):
 
     labels = load_labels(path, "object")
 
-    assert labels["task0001"]["original"].successes == 6
-    assert labels["task0001"]["better"].successes == 9
+    assert labels[1]["original"].successes == 6
+    assert labels[1]["better"].successes == 9
 
 
 def test_task_splits_never_split_a_task_across_splits():
