@@ -268,9 +268,11 @@ def load_dataset_arrays(
     dataset_dir: Path,
     method: str,
     s_k: int | None,
+    splits_path: Path | None = None,
 ) -> DatasetArrays:
     manifest_path = dataset_dir / "manifest.jsonl"
-    splits_path = dataset_dir / "splits.json"
+    if splits_path is None:
+        splits_path = dataset_dir / "splits.json"
     if not manifest_path.exists():
         raise FileNotFoundError(f"Week 3 manifest not found: {manifest_path}")
     if not splits_path.exists():
@@ -1035,6 +1037,13 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     dataset_dir = Path(args.dataset_dir).expanduser().resolve()
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    splits_path = (
+        Path(args.splits_path).expanduser().resolve()
+        if getattr(args, "splits_path", None)
+        else None
+    )
+    if splits_path is not None and not splits_path.exists():
+        raise FileNotFoundError(f"--splits-path not found: {splits_path}")
     methods = tuple(args.methods)
     invalid = set(methods) - set(DEFAULT_METHODS)
     if invalid:
@@ -1050,6 +1059,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     all_seed_selection_rows: list[dict[str, Any]] = []
     summary: dict[str, Any] = {
         "dataset_dir": str(dataset_dir),
+        "splits_path": str(splits_path) if splits_path is not None else None,
         "output_dir": str(output_dir),
         "methods": {},
         "config": {
@@ -1079,7 +1089,9 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         for method_name in method_variants:
             actual_method = method_name.split("_K", 1)[0]
             s_k = int(method_name.split("_K", 1)[1]) if "_K" in method_name else None
-            dataset = load_dataset_arrays(dataset_dir, actual_method, s_k)
+            dataset = load_dataset_arrays(
+                dataset_dir, actual_method, s_k, splits_path=splits_path
+            )
             transformed, preprocessor, feature_metadata = prepare_features(
                 dataset,
                 actual_method,
@@ -1219,6 +1231,15 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-dir", required=True)
+    parser.add_argument(
+        "--splits-path",
+        default=None,
+        help=(
+            "override the split file; defaults to <dataset-dir>/splits.json. "
+            "Lets an alternative group assignment reuse the same features, "
+            "which is how split-robustness runs are produced."
+        ),
+    )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument(
         "--methods",

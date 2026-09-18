@@ -15,6 +15,8 @@ from probe.data.train_week3_predictors import (
     validate_group_layout,
 )
 
+torch = pytest.importorskip("torch", reason="group_ranking_loss requires PyTorch")
+
 
 def test_sigmoid_numpy_is_stable_for_large_logits():
     values = sigmoid_numpy(np.asarray([-1000.0, 0.0, 1000.0]))
@@ -159,9 +161,9 @@ def test_group_split_indices_are_group_level_not_record_level():
 
 
 def test_group_ranking_loss_prefers_correctly_ordered_logits():
-    successes = np.asarray([3, 6, 9], dtype=np.float32)
-    trials = np.full(3, 12.0, dtype=np.float32)
-    good = np.asarray([0.0, 1.0, 2.0])
+    successes = torch.tensor([3.0, 6.0, 9.0])
+    trials = torch.full((3,), 12.0)
+    good = torch.tensor([0.0, 1.0, 2.0])
     bad = -good
 
     good_loss = float(group_ranking_loss(good, successes, trials, 3, 0.1))
@@ -172,13 +174,13 @@ def test_group_ranking_loss_prefers_correctly_ordered_logits():
 def test_group_ranking_loss_is_minimised_by_matching_the_empirical_rates():
     # Logits proportional to the empirical rates reproduce the soft target, so
     # any perturbation away from that ordering must increase the loss.
-    successes = np.asarray([3, 6, 9], dtype=np.float32)
-    trials = np.full(3, 12.0, dtype=np.float32)
+    successes = torch.tensor([3.0, 6.0, 9.0])
+    trials = torch.full((3,), 12.0)
     rates = successes / trials
 
     matched = float(group_ranking_loss(rates, successes, trials, 3, 1.0))
     perturbed = float(
-        group_ranking_loss(rates + np.asarray([1.0, 0.0, -1.0]), successes, trials, 3, 1.0)
+        group_ranking_loss(rates + torch.tensor([1.0, 0.0, -1.0]), successes, trials, 3, 1.0)
     )
     assert matched < perturbed
 
@@ -186,9 +188,9 @@ def test_group_ranking_loss_is_minimised_by_matching_the_empirical_rates():
 def test_group_ranking_loss_is_invariant_to_a_per_group_shift():
     # Only within-group differences matter; a constant added to every logit of
     # a group must not change the loss.
-    successes = np.asarray([3, 6, 9, 1, 2, 4], dtype=np.float32)
-    trials = np.full(6, 12.0, dtype=np.float32)
-    logits = np.asarray([0.1, 0.5, 0.9, -0.2, 0.0, 0.3])
+    successes = torch.tensor([3.0, 6.0, 9.0, 1.0, 2.0, 4.0])
+    trials = torch.full((6,), 12.0)
+    logits = torch.tensor([0.1, 0.5, 0.9, -0.2, 0.0, 0.3])
 
     base = float(group_ranking_loss(logits, successes, trials, 3, 0.1))
     shifted = float(group_ranking_loss(logits + 5.0, successes, trials, 3, 0.1))
@@ -196,7 +198,7 @@ def test_group_ranking_loss_is_invariant_to_a_per_group_shift():
 
 
 def test_group_ranking_loss_rejects_a_non_dividing_record_count():
-    successes = np.asarray([3, 6, 9, 1], dtype=np.float32)
-    trials = np.full(4, 12.0, dtype=np.float32)
+    successes = torch.tensor([3.0, 6.0, 9.0, 1.0])
+    trials = torch.full((4,), 12.0)
     with pytest.raises(ValueError, match="fold into groups"):
-        group_ranking_loss(np.zeros(4), successes, trials, 3, 0.1)
+        group_ranking_loss(torch.zeros(4), successes, trials, 3, 0.1)
