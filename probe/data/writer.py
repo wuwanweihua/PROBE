@@ -19,6 +19,7 @@ class ProbeDatasetWriter:
         self.manifest_path = self.dataset_dir / manifest_name
         self.obs_dir = self.dataset_dir / "observations"
         self.actions_dir = self.dataset_dir / "actions"
+        self.features_dir = self.dataset_dir / "features"
         self.dataset_dir.mkdir(parents=True, exist_ok=True)
         self.obs_dir.mkdir(parents=True, exist_ok=True)
         self.actions_dir.mkdir(parents=True, exist_ok=True)
@@ -63,6 +64,28 @@ class ProbeDatasetWriter:
     def append_record(self, record: ProbeCallRecord) -> None:
         with self.manifest_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record.to_json_dict(), ensure_ascii=False) + "\n")
+
+    def write_b_feature(
+        self,
+        record_id: str,
+        feature: Any,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Persist the VLA hidden feature (B) captured for one record.
+
+        Stored separately from the observation so the replanning-level dataset
+        can build the B block without re-running the policy server.
+        """
+
+        self.features_dir.mkdir(parents=True, exist_ok=True)
+        path = self.features_dir / f"{record_id}.npz"
+        payload: dict[str, Any] = {"b_feature": np.asarray(feature, dtype=np.float32)}
+        if metadata:
+            payload["b_feature_metadata"] = np.asarray(
+                json.dumps(metadata, ensure_ascii=False)
+            )
+        np.savez_compressed(path, **payload)
+        return self._relative(path)
 
     def _count_existing_records(self) -> int:
         if not self.manifest_path.exists():

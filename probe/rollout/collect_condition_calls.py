@@ -43,6 +43,7 @@ class ConditionCollectorArgs:
     resize_size: int = 224
     replan_steps: int = 5
     k_samples: int = 32
+    capture_b: bool = False
     max_base_states: int | None = None
     max_episodes: int | None = None
     action_selection: str = "random"
@@ -309,7 +310,20 @@ def _sample_and_enqueue_action(
         element["prompt"] = policy_instruction
     else:
         element["prompt"] = policy_instruction
-    samples = client.sample_action_chunks(element, k=args.k_samples)
+    if args.capture_b:
+        (
+            samples,
+            _sample_times,
+            b_feature,
+            b_feature_metadata,
+        ) = client.sample_action_chunks_with_feature_timing(
+            element,
+            k=args.k_samples,
+        )
+    else:
+        samples = client.sample_action_chunks(element, k=args.k_samples)
+        b_feature = None
+        b_feature_metadata = {}
     selected = _select_action_index(samples, args.action_selection, exec_rng)
     selected_chunk = samples[selected]
     if len(selected_chunk) < args.replan_steps:
@@ -321,6 +335,9 @@ def _sample_and_enqueue_action(
     record_id = writer.allocate_record_id()
     obs_path = writer.write_observation(record_id, observation_arrays_for_record(obs, element))
     actions_path = writer.write_action_samples(record_id, samples, selected)
+    b_feature_path: str | None = None
+    if b_feature is not None:
+        b_feature_path = writer.write_b_feature(record_id, b_feature, b_feature_metadata)
     condition_id = str(condition["condition_id"])
     condition_type = str(condition.get("condition_type") or condition_id)
     return ProbeCallRecord(
@@ -340,6 +357,7 @@ def _sample_and_enqueue_action(
         selected_sample_index=int(selected),
         obs_path=obs_path,
         action_samples_path=actions_path,
+        b_feature_path=b_feature_path,
         final_success=False,
         episode_done=False,
         episode_steps=0,
@@ -374,6 +392,8 @@ def _sample_and_enqueue_action(
             "probe_seed_applied_locally": True,
             "policy_server_seed_control": "not_exposed_by_client",
             "action_sample_shape": list(samples.shape),
+            "capture_b": bool(args.capture_b),
+            "b_feature_metadata": b_feature_metadata or None,
             "host": args.host,
             "port": args.port,
             **(rewrite_result.to_metadata() if rewrite_result is not None else {}),
@@ -535,6 +555,15 @@ def _parse_args() -> ConditionCollectorArgs:
     parser.add_argument("--resize-size", type=int, default=224)
     parser.add_argument("--replan-steps", type=int, default=5)
     parser.add_argument("--k-samples", type=int, default=32)
+    parser.add_argument(
+        "--capture-b",
+        action="store_true",
+        help=(
+            "also request the VLA hidden feature (B) on the first sample of each "
+            "replanning; requires the policy server to be patched with "
+            "scripts/patch_openpi_week2_b.py"
+        ),
+    )
     parser.add_argument("--max-base-states", type=int)
     parser.add_argument("--max-episodes", type=int)
     parser.add_argument("--action-selection", choices=["random", "first"], default="random")
@@ -565,6 +594,7 @@ def _parse_args() -> ConditionCollectorArgs:
         resize_size=namespace.resize_size,
         replan_steps=namespace.replan_steps,
         k_samples=namespace.k_samples,
+        capture_b=namespace.capture_b,
         max_base_states=namespace.max_base_states,
         max_episodes=namespace.max_episodes,
         action_selection=namespace.action_selection,

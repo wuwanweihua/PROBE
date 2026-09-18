@@ -34,6 +34,7 @@ class ProbeCallRecord:
     episode_done: bool
     episode_steps: int
     reward_sum: float
+    b_feature_path: str | None = None
     base_id: str = ""
     condition_id: str = ""
     condition_type: str = ""
