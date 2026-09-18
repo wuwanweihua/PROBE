@@ -167,6 +167,9 @@ def load_split_map(path: Path) -> dict[str, str]:
     return result
 
 
+CONDITION_ORDER = ("better", "original", "worse")
+
+
 @dataclass
 class DatasetArrays:
     records: list[dict[str, Any]]
@@ -174,6 +177,7 @@ class DatasetArrays:
     successes: np.ndarray
     trials: np.ndarray
     splits: np.ndarray
+    records_per_group: int = 1
 
     @property
     def split_indices(self) -> dict[str, np.ndarray]:
@@ -181,6 +185,83 @@ class DatasetArrays:
             split: np.flatnonzero(self.splits == split)
             for split in ("train", "validation", "test")
         }
+
+    @property
+    def num_groups(self) -> int:
+        return len(self.records) // self.records_per_group
+
+    @property
+    def group_splits(self) -> np.ndarray:
+        """Split label per group, folded from the first record of each group."""
+        return self.splits[:: self.records_per_group]
+
+    @property
+    def group_split_indices(self) -> dict[str, np.ndarray]:
+        """Group-level counterpart of ``split_indices``.
+
+        Record-level indices cannot be used to index group-folded tensors; this
+        maps a split to the positions of its groups in the folded dimension.
+        """
+        per_group = self.records_per_group
+        grouped: dict[str, np.ndarray] = {}
+        for split in ("train", "validation", "test"):
+            grouped[split] = np.flatnonzero(
+                self.group_splits == split
+            ).astype(np.int64)
+        # Sanity: every group is accounted for exactly once.
+        if int(sum(len(v) for v in grouped.values())) != self.num_groups:
+            raise AssertionError(
+                f"group split partition covers "
+                f"{sum(len(v) for v in grouped.values())} of {self.num_groups} groups"
+            )
+        if per_group * self.num_groups != len(self.records):
+            raise AssertionError("records do not fold evenly into groups")
+        return grouped
+
+
+def validate_group_layout(
+    records: list[dict[str, Any]],
+    splits: np.ndarray,
+    records_per_group: int,
+) -> None:
+    """Assert the contiguous, fixed-order, split-pure group layout.
+
+    The group-aware training loss folds records into ``(num_groups,
+    records_per_group)`` with a plain reshape, which is only correct while all
+    three conditions of a task are contiguous in manifest order, appear in a
+    fixed order, and never straddle a split.  Checking it here turns a silent
+    mis-fold into an immediate error if the dataset layout ever changes.
+    """
+    if records_per_group < 2:
+        return
+    if len(records) % records_per_group != 0:
+        raise ValueError(
+            f"{len(records)} records do not divide evenly into groups of "
+            f"{records_per_group}"
+        )
+    for start in range(0, len(records), records_per_group):
+        block = records[start : start + records_per_group]
+        group_ids = {str(record.get("group_id")) for record in block}
+        if len(group_ids) != 1:
+            raise ValueError(
+                f"records {start}..{start + records_per_group - 1} span multiple "
+                f"groups: {sorted(group_ids)}"
+            )
+        conditions = tuple(str(record.get("condition_id")) for record in block)
+        if conditions != CONDITION_ORDER:
+            raise ValueError(
+                f"group {sorted(group_ids)[0]}: expected condition order "
+                f"{CONDITION_ORDER}, got {conditions}"
+            )
+        block_splits = {
+            str(splits[index])
+            for index in range(start, start + records_per_group)
+        }
+        if len(block_splits) != 1:
+            raise ValueError(
+                f"group {sorted(group_ids)[0]} straddles splits: "
+                f"{sorted(block_splits)}"
+            )
 
 
 def load_dataset_arrays(
@@ -231,13 +312,45 @@ def load_dataset_arrays(
 
     if not features:
         raise ValueError(f"{dataset_dir}: empty Week 3 manifest")
+    splits_array = np.asarray(split_names)
+    records_per_group = infer_records_per_group(records)
+    validate_group_layout(records, splits_array, records_per_group)
+    distinct_groups = len({str(record.get("group_id")) for record in records})
+    if records_per_group * distinct_groups != len(records):
+        raise ValueError(
+            f"manifest is not laid out in contiguous groups: "
+            f"{len(records)} records, {distinct_groups} distinct group_ids, "
+            f"but the first group spans {records_per_group} records. "
+            "Group-aware training requires each task's records to be adjacent."
+        )
     return DatasetArrays(
         records=records,
         features=np.stack(features).astype(np.float32),
         successes=np.asarray(successes, dtype=np.float32),
         trials=np.asarray(trials, dtype=np.float32),
-        splits=np.asarray(split_names),
+        splits=splits_array,
+        records_per_group=records_per_group,
     )
+
+
+def infer_records_per_group(records: list[dict[str, Any]]) -> int:
+    """Derive how many consecutive records belong to one group.
+
+    Groups are contiguous runs sharing a ``group_id``, so the run length of the
+    first group is the per-group record count for the whole manifest.  Every
+    other run length is checked when the layout is validated.
+    """
+    if not records:
+        raise ValueError("cannot infer group size from an empty manifest")
+    first_group = str(records[0].get("group_id"))
+    length = 0
+    for record in records:
+        if str(record.get("group_id")) != first_group:
+            break
+        length += 1
+    if length == 0:
+        raise ValueError("first manifest record has no group_id")
+    return length
 
 
 @dataclass
@@ -495,6 +608,118 @@ def binomial_nll_from_logits(logits: Any, successes: Any, trials: Any) -> Any:
     ).sum() / trials.sum()
 
 
+def group_ranking_loss(
+    logits: Any,
+    successes: Any,
+    trials: Any,
+    records_per_group: int,
+    temperature: float,
+) -> Any:
+    """Listwise cross-entropy over the conditions of each task group.
+
+    The evaluated metric is an argmax over the conditions of one task, but the
+    binomial NLL above is computed per record and is blind to that structure.
+    This term scores the conditions of a group jointly, so training optimises
+    the same comparison the metric makes.
+
+    ``logits``/``successes``/``trials`` are flat record arrays in the manifest's
+    contiguous group order; they are folded to ``(num_groups,
+    records_per_group)``.  Soft targets come from the empirical success rates so
+    that a group whose conditions genuinely tie receives a spread target instead
+    of being forced to pick one, matching the tie-aware metric.
+    """
+
+    require_torch()
+    num_records = logits.shape[0]
+    if num_records % records_per_group != 0:
+        raise ValueError(
+            f"{num_records} records do not fold into groups of {records_per_group}"
+        )
+    if temperature <= 0:
+        raise ValueError(f"temperature must be positive, got {temperature}")
+    group_logits = logits.reshape(-1, records_per_group)
+    rates = (successes / trials).reshape(-1, records_per_group)
+    targets = F.softmax(rates / temperature, dim=1)
+    log_probs = F.log_softmax(group_logits, dim=1)
+    return -(targets * log_probs).sum(dim=1).mean()
+
+
+def combined_training_loss(
+    logits: Any,
+    successes: Any,
+    trials: Any,
+    train_index: Any,
+    dataset: "DatasetArrays",
+    ranking_weight: float,
+    temperature: float,
+) -> tuple[Any, Any, Any]:
+    """Binomial NLL plus an optional group-ranking term.
+
+    Returns ``(total, nll, ranking)`` so callers can log the components. Both
+    terms are computed on the training split only; ``ranking`` is zero when the
+    weight is zero.
+    """
+
+    require_torch()
+    nll = binomial_nll_from_logits(
+        logits[train_index],
+        successes[train_index],
+        trials[train_index],
+    )
+    records_per_group = dataset.records_per_group
+    if ranking_weight <= 0:
+        return nll, nll, torch.zeros((), device=nll.device)
+    if records_per_group < 2:
+        raise ValueError(
+            "--ranking-weight is set but the dataset has no multi-record groups "
+            f"(records_per_group={records_per_group}); the group-ranking term "
+            "would be silently ignored"
+        )
+
+    train_mask = torch.zeros_like(trials, dtype=torch.bool)
+    train_mask[train_index] = True
+    group_mask = train_mask.reshape(-1, records_per_group).all(dim=1)
+    group_flat = group_mask.repeat_interleave(records_per_group)
+    ranking = group_ranking_loss(
+        logits[group_flat],
+        successes[group_flat],
+        trials[group_flat],
+        records_per_group,
+        temperature,
+    )
+    return nll + ranking_weight * ranking, nll, ranking
+
+
+def _split_ranking_loss(
+    logits: Any,
+    successes: Any,
+    trials: Any,
+    dataset: "DatasetArrays",
+    split: str,
+    temperature: float,
+    device: Any,
+) -> Any:
+    """Group-ranking loss restricted to one split, for validation monitoring."""
+
+    require_torch()
+    records_per_group = dataset.records_per_group
+    group_indices = dataset.group_split_indices[split]
+    group_mask = np.zeros(dataset.num_groups, dtype=bool)
+    group_mask[group_indices] = True
+    record_mask = torch.from_numpy(
+        np.repeat(group_mask, records_per_group)
+    ).to(device)
+    if not bool(record_mask.any()):
+        return torch.zeros((), device=device)
+    return group_ranking_loss(
+        logits[record_mask],
+        successes[record_mask],
+        trials[record_mask],
+        records_per_group,
+        temperature,
+    )
+
+
 def sigmoid_numpy(logits: np.ndarray) -> np.ndarray:
     logits = np.asarray(logits, dtype=np.float64)
     result = np.empty_like(logits)
@@ -545,6 +770,8 @@ def train_one_seed(
     weight_decay: float,
     hidden_dims: tuple[int, int],
     dropout: float,
+    ranking_weight: float = 0.0,
+    temperature: float = 0.1,
 ) -> dict[str, Any]:
     require_torch()
     seed_everything(seed)
@@ -584,10 +811,14 @@ def train_one_seed(
         optimizer.zero_grad(set_to_none=True)
         logits = model(tensors["features"])
         train_index = torch.as_tensor(split_indices["train"], device=resolved_device)
-        train_loss = binomial_nll_from_logits(
-            logits[train_index],
-            tensors["successes"][train_index],
-            tensors["trials"][train_index],
+        train_loss, train_nll, train_ranking = combined_training_loss(
+            logits,
+            tensors["successes"],
+            tensors["trials"],
+            train_index,
+            dataset,
+            ranking_weight,
+            temperature,
         )
         train_loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
@@ -612,6 +843,18 @@ def train_one_seed(
                 tensors["successes"][test_index],
                 tensors["trials"][test_index],
             )
+            if ranking_weight > 0 and dataset.records_per_group >= 2:
+                validation_ranking = _split_ranking_loss(
+                    all_logits,
+                    tensors["successes"],
+                    tensors["trials"],
+                    dataset,
+                    "validation",
+                    temperature,
+                    resolved_device,
+                )
+            else:
+                validation_ranking = torch.zeros((), device=resolved_device)
         epoch_probabilities = sigmoid_numpy(
             all_logits.detach().cpu().numpy()
         )
@@ -640,8 +883,13 @@ def train_one_seed(
         history.append(
             {
                 "epoch": epoch,
-                "train_nll": train_value,
+                "train_loss": train_value,
+                "train_nll": float(train_nll.detach().cpu()),
+                "train_ranking_loss": float(train_ranking.detach().cpu()),
                 "validation_nll": validation_value,
+                "validation_ranking_loss": float(
+                    validation_ranking.detach().cpu()
+                ),
                 "test_nll": test_value,
                 "train_tie_aware_accuracy": tie_aware_accuracy["train"],
                 "validation_tie_aware_accuracy": tie_aware_accuracy["validation"],
@@ -816,6 +1064,8 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             "learning_rate": args.learning_rate,
             "weight_decay": args.weight_decay,
             "seeds": list(args.seeds),
+            "ranking_weight": args.ranking_weight,
+            "ranking_temperature": args.ranking_temperature,
             "device": args.device,
         },
     }
@@ -871,6 +1121,8 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                         weight_decay=args.weight_decay,
                         hidden_dims=args.hidden_dims,
                         dropout=args.dropout,
+                        ranking_weight=args.ranking_weight,
+                        temperature=args.ranking_temperature,
                     )
                     run_dir = output_dir / "models" / method_name / model_kind / f"seed{seed}"
                     run_dir.mkdir(parents=True, exist_ok=True)
@@ -988,6 +1240,24 @@ def main() -> None:
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--seeds", type=int, nargs="+", default=list(DEFAULT_SEEDS))
+    parser.add_argument(
+        "--ranking-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "weight of the group-ranking (listwise) loss added to the binomial "
+            "NLL; 0 reproduces the record-wise baseline"
+        ),
+    )
+    parser.add_argument(
+        "--ranking-temperature",
+        type=float,
+        default=0.1,
+        help=(
+            "temperature of the soft target built from empirical success rates; "
+            "smaller is sharper"
+        ),
+    )
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
