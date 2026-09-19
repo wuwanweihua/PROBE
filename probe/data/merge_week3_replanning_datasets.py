@@ -82,6 +82,8 @@ def merge_dataset_dirs(dataset_dirs: list[Path], output_dir: Path) -> dict[str, 
     merged_group_splits: dict[str, dict[str, str]] = {s: {} for s in SPLITS}
     seen_records: set[str] = set()
     seen_groups: dict[str, str] = {}
+    record_owner: dict[str, str] = {}
+    group_owner: dict[str, str] = {}
     label_rows: list[dict[str, Any]] = []
     per_source: list[dict[str, Any]] = []
 
@@ -100,17 +102,32 @@ def merge_dataset_dirs(dataset_dirs: list[Path], output_dir: Path) -> dict[str, 
             for split in SPLITS
             for group_id in splits["groups"].get(split, [])
         }
+        source_name = str(dataset_dir)
 
         for row in rows:
             record_id = str(row["record_id"])
             group_id = str(row["group_id"])
-            if record_id in seen_records:
+
+            # A record belongs to exactly one source. The same record_id appearing
+            # in a *different* source means the two datasets overlap.
+            prev_record_source = record_owner.get(record_id)
+            if prev_record_source is not None and prev_record_source != source_name:
                 raise ValueError(
-                    f"duplicate record_id {record_id!r} between sources; "
-                    "suite prefixes are required to merge safely"
+                    f"duplicate record_id {record_id!r} in both "
+                    f"{prev_record_source} and {source_name}"
                 )
-            if group_id in seen_groups and seen_groups[group_id] not in (None,):
-                raise ValueError(f"duplicate group_id {group_id!r} between sources")
+            record_owner[record_id] = source_name
+
+            # Same for groups: repetition inside one source is expected (a group
+            # has several conditions), a second *source* claiming the group is not.
+            prev_group_source = group_owner.get(group_id)
+            if prev_group_source is not None and prev_group_source != source_name:
+                raise ValueError(
+                    f"duplicate group_id {group_id!r} in both "
+                    f"{prev_group_source} and {source_name}"
+                )
+            group_owner[group_id] = source_name
+
             split = group_split.get(group_id)
             if split is None:
                 raise ValueError(f"{record_id}: group {group_id} missing from splits")
