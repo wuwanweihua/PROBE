@@ -242,6 +242,24 @@ def merge_dataset_dirs(dataset_dirs: list[Path], output_dir: Path) -> dict[str, 
     return summary
 
 
+def _reject_repeated_dataset_flag(argv: list[str]) -> None:
+    """Fail loudly if --dataset-dir was repeated.
+
+    With ``nargs='+'`` a repeated flag is not additive: argparse keeps only the
+    last occurrence, so ``--dataset-dir a --dataset-dir b --dataset-dir c``
+    silently merges just ``c``.  That looks like a successful multi-source merge,
+    which is exactly the kind of silent wrong answer worth refusing.
+    """
+
+    count = sum(1 for token in argv if token == "--dataset-dir")
+    if count > 1:
+        raise SystemExit(
+            f"--dataset-dir was given {count} times, but argparse keeps only the "
+            "last one. Pass a single flag with several values instead, e.g.\n"
+            "  --dataset-dir data/a data/b data/c"
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -251,10 +269,16 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
 
+    _reject_repeated_dataset_flag(sys.argv[1:])
+
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 
     dataset_dirs = [path.expanduser().resolve() for path in args.dataset_dir]
     output_dir = args.output_dir.expanduser().resolve()
+
+    for path in dataset_dirs:
+        if not (path / "manifest.jsonl").exists():
+            raise SystemExit(f"{path} has no manifest.jsonl; wrong source path?")
 
     summary = merge_dataset_dirs(dataset_dirs, output_dir)
 
@@ -264,6 +288,10 @@ def main() -> None:
         summary["num_records"],
         summary["num_groups"],
         summary["num_tasks"],
+    )
+    LOGGER.info(
+        "sources merged: %s",
+        [Path(src["dataset_dir"]).name for src in summary["sources"]],
     )
     LOGGER.info(
         "split groups=%s records=%s tasks=%s",
